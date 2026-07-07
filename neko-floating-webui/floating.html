@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>N.E.K.O Floating WebUI</title>
+    <link rel="stylesheet" href="floating.css">
+  </head>
+  <body>
+    <section class="panel" data-minimized="false" data-routes-open="false">
+      <header class="toolbar" data-drag-handle>
+        <div class="brand">
+          <span class="status-dot" data-status></span>
+          <span>N.E.K.O</span>
+        </div>
+        <nav class="actions" aria-label="浮窗操作">
+          <button type="button" data-action="reload" title="刷新 WebUI" aria-label="刷新 WebUI">↻</button>
+          <button type="button" data-action="routes" title="入口" aria-label="入口">☰</button>
+          <button type="button" data-action="open" title="打开完整页面" aria-label="打开完整页面">↗</button>
+          <button type="button" data-action="minimize" title="最小化" aria-label="最小化">−</button>
+          <button type="button" data-action="close" title="关闭" aria-label="关闭">×</button>
+        </nav>
+      </header>
+
+      <div class="routes" data-routes hidden>
+        <button type="button" data-route="/">主界面</button>
+        <button type="button" data-route="/chat_full">完整聊天</button>
+        <button type="button" data-route="/model_manager">模型</button>
+        <button type="button" data-route="/api_key">密钥</button>
+        <button type="button" data-route="/memory_browser">记忆</button>
+      </div>
+
+      <main class="content">
+        <iframe
+          id="neko-webui"
+          title="N.E.K.O WebUI"
+          allowtransparency="true"
+          allow="autoplay; microphone; camera; display-capture; clipboard-read; clipboard-write"
+          referrerpolicy="no-referrer-when-downgrade"
+        ></iframe>
+        <div class="offline" data-offline hidden>
+          <strong>N.E.K.O WebUI 未连接</strong>
+          <span>确认本地服务已运行在 http://localhost:48911/</span>
+          <button type="button" data-action="retry">重试</button>
+        </div>
+      </main>
+
+      <div class="resize resize-e" data-resize="e"></div>
+      <div class="resize resize-s" data-resize="s"></div>
+      <div class="resize resize-se" data-resize="se"></div>
+    </section>
+    <script src="floating.js"></script>
+  </body>
+</html>

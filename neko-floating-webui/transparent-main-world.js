@@ -1,0 +1,795 @@
+(function () {
+  if (window.top === window || window.__nekoFloatingTransparentMainWorld) {
+    return;
+  }
+
+  window.__nekoFloatingTransparentMainWorld = true;
+  document.documentElement.dataset.nekoFloatingTransparentMainWorld = 'enabled';
+
+  patchLive2DManager();
+  patchGetUserMedia();
+  patchAudioContextAutoResume();
+  forceTransparentRenderers();
+
+  window.addEventListener('load', forceTransparentRenderers);
+  window.addEventListener('resize', forceTransparentRenderers);
+  window.addEventListener('live2d-model-loaded', forceTransparentRenderers);
+  window.addEventListener('live2d-floating-buttons-ready', forceTransparentRenderers);
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || !event.data || event.data.type !== 'NEKO_FLOATING_WEBUI_MAIN_WORLD_REFLOW') {
+      return;
+    }
+
+    forcePageReflow();
+  });
+  window.addEventListener('message', (event) => {
+    if (!event.data || typeof event.data.type !== 'string') {
+      return;
+    }
+    if (!event.data.type.startsWith('NEKO_MEDIA_') && !event.data.type.startsWith('NEKO_PCM_')) {
+      return;
+    }
+    if (event.data.type === 'NEKO_PCM_PORT') {
+      if (event.source === window.parent && typeof event.origin === 'string' && event.origin.startsWith('chrome-extension://') && event.ports && event.ports[0]) {
+        attachFloatingPcmPort(event.ports[0]);
+      }
+      return;
+    }
+    const fromIsolated = event.source === window && event.data._sender === 'isolated';
+    const fromFloating = event.source === window.parent
+      && event.data._sender === 'floating'
+      && typeof event.origin === 'string'
+      && event.origin.startsWith('chrome-extension://');
+    if (!fromIsolated && !fromFloating) {
+      return;
+    }
+    if (event.data.type.startsWith('NEKO_PCM_')) {
+      handlePcmRelayMessage(event.data);
+    } else {
+      handleIsolatedMessage(event.data);
+    }
+  });
+
+  let ticks = 0;
+  const intervalId = window.setInterval(() => {
+    patchLive2DManager();
+    resumeTrackedAudioContexts();
+    forceTransparentRenderers();
+    ticks += 1;
+    if (ticks > 160) {
+      window.clearInterval(intervalId);
+    }
+  }, 250);
+
+  function patchLive2DManager() {
+    const Live2DManager = window.Live2DManager;
+    if (!Live2DManager || !Live2DManager.prototype || Live2DManager.prototype.__nekoFloatingTransparentPatched) {
+      return;
+    }
+
+    const originalInitPIXI = Live2DManager.prototype.initPIXI;
+    if (typeof originalInitPIXI !== 'function') {
+      return;
+    }
+
+    Live2DManager.prototype.initPIXI = async function patchedInitPIXI(...args) {
+      const result = await originalInitPIXI.apply(this, args);
+      makePixiTransparent(this.pixi_app);
+      return result;
+    };
+
+    Live2DManager.prototype.__nekoFloatingTransparentPatched = true;
+  }
+
+  const pendingRequests = new Map();
+  const pcmRelayRequests = new Map();
+  const trackedAudioContexts = new Set();
+  let floatingPcmPort = null;
+
+  function patchGetUserMedia() {
+    if (!navigator.mediaDevices || navigator.mediaDevices.__nekoMicRelayPatched) {
+      return false;
+    }
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async function (constraints) {
+      const c = constraints || {};
+      if (c.audio && !c.video) {
+        return relayAudioViaPcm(c).catch((err) => {
+          console.warn('[NEKO-MIC main] PCM relay failed:', formatMediaError(err));
+          throw err;
+        });
+      }
+      return original(c);
+    };
+    navigator.mediaDevices.__nekoMicRelayPatched = true;
+    return true;
+  }
+
+  if (!patchGetUserMedia()) {
+    const pollId = window.setInterval(() => {
+      if (patchGetUserMedia()) {
+        window.clearInterval(pollId);
+      }
+    }, 50);
+    window.setTimeout(() => window.clearInterval(pollId), 10000);
+  }
+
+  function patchAudioContextAutoResume() {
+    if (window.__nekoAudioContextAutoResumePatched) {
+      return;
+    }
+
+    const OriginalAudioContext = window.AudioContext || window.webkitAudioContext;
+    if (typeof OriginalAudioContext !== 'function') {
+      return;
+    }
+
+    const PatchedAudioContext = new Proxy(OriginalAudioContext, {
+      construct(target, args) {
+        const context = Reflect.construct(target, args);
+        trackAudioContext(context);
+        return context;
+      }
+    });
+
+    if (window.AudioContext) {
+      window.AudioContext = PatchedAudioContext;
+    }
+    if (window.webkitAudioContext) {
+      window.webkitAudioContext = PatchedAudioContext;
+    }
+
+    ['pointerdown', 'click', 'keydown', 'touchstart'].forEach((eventName) => {
+      window.addEventListener(eventName, resumeTrackedAudioContexts, { capture: true, passive: true });
+    });
+    document.addEventListener('visibilitychange', resumeTrackedAudioContexts);
+    window.addEventListener('focus', resumeTrackedAudioContexts);
+    window.__nekoAudioContextAutoResumePatched = true;
+  }
+
+  function trackAudioContext(context) {
+    if (!context || trackedAudioContexts.has(context)) {
+      return;
+    }
+
+    trackedAudioContexts.add(context);
+    const originalClose = typeof context.close === 'function' ? context.close.bind(context) : null;
+    if (originalClose) {
+      context.close = (...args) => {
+        trackedAudioContexts.delete(context);
+        return originalClose(...args);
+      };
+    }
+    resumeAudioContext(context);
+  }
+
+  function resumeTrackedAudioContexts() {
+    trackedAudioContexts.forEach(resumeAudioContext);
+  }
+
+  function resumeAudioContext(context) {
+    if (!context || context.state !== 'suspended' || typeof context.resume !== 'function') {
+      return;
+    }
+    context.resume().catch(() => {});
+  }
+
+  async function relayAudioViaPcm(constraints) {
+    const requestId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random());
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (typeof AudioContextCtor !== 'function') {
+      throw new DOMException('AudioContext is not available', 'NotSupportedError');
+    }
+
+    const audioContext = new AudioContextCtor({ sampleRate: 48000 });
+    trackAudioContext(audioContext);
+    await audioContext.resume().catch(() => {});
+
+    const destination = audioContext.createMediaStreamDestination();
+    const outputTrack = destination.stream.getAudioTracks()[0];
+    if (!outputTrack) {
+      try { audioContext.close(); } catch {}
+      throw new DOMException('Could not create PCM relay audio track', 'NotFoundError');
+    }
+
+    let resolvePromise;
+    let rejectPromise;
+    const streamPromise = new Promise((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+
+    const entry = {
+      audioContext,
+      destination,
+      stream: destination.stream,
+      resolve: resolvePromise,
+      reject: rejectPromise,
+      nextStartTime: 0,
+      chunksReceived: 0,
+      resolved: false,
+      closed: false,
+      lastNonSilentAt: 0,
+      idleTimer: null,
+      bridgeTimer: window.setTimeout(() => {
+        rejectPcmRelay(requestId, new DOMException('PCM bridge did not receive start request. Reload the host page after reloading the extension.', 'TimeoutError'));
+      }, 3000),
+      setupTimer: window.setTimeout(() => {
+        rejectPcmRelay(requestId, new DOMException('PCM relay timeout', 'TimeoutError'));
+      }, 15000)
+    };
+    pcmRelayRequests.set(requestId, entry);
+
+    const originalStop = outputTrack.stop.bind(outputTrack);
+    outputTrack.stop = () => {
+      stopPcmRelay(requestId);
+      originalStop();
+    };
+    outputTrack.onended = () => stopPcmRelay(requestId);
+
+    console.log('[NEKO-MIC main] Starting PCM relay', requestId.substring(0, 8), 'ctxState:', audioContext.state);
+    postToIsolated({ type: 'NEKO_PCM_START', requestId, constraints, sampleRate: audioContext.sampleRate });
+    return streamPromise;
+  }
+
+  function handlePcmRelayMessage(data) {
+    const entry = pcmRelayRequests.get(data.requestId);
+    if (!entry || entry.closed) {
+      return;
+    }
+
+    if (data.type === 'NEKO_PCM_SIGNAL') {
+      if (data.error) {
+        rejectPcmRelay(data.requestId, new DOMException(data.error.message || 'PCM relay error', data.error.name || 'UnknownError'));
+      } else if (data.ready) {
+        window.clearTimeout(entry.bridgeTimer);
+        console.log('[NEKO-MIC main] PCM relay ready', data.requestId.substring(0, 8), 'sourceSampleRate:', data.sampleRate);
+      }
+      return;
+    }
+
+    if (data.type === 'NEKO_PCM_BRIDGE_ACK') {
+      window.clearTimeout(entry.bridgeTimer);
+      console.log('[NEKO-MIC main] PCM bridge ack', data.requestId.substring(0, 8));
+      return;
+    }
+
+    if (data.type !== 'NEKO_PCM_CHUNK' || typeof data.pcm16 !== 'string') {
+      return;
+    }
+
+    appendPcmChunk(data.requestId, entry, data);
+  }
+
+  function appendPcmChunk(requestId, entry, data) {
+    try {
+      resumeAudioContext(entry.audioContext);
+      const samples = decodePcm16Base64(data.pcm16);
+      if (samples.length === 0) {
+        return;
+      }
+
+      const sampleRate = Number(data.sampleRate) || entry.audioContext.sampleRate || 48000;
+      const buffer = entry.audioContext.createBuffer(1, samples.length, sampleRate);
+      buffer.copyToChannel(samples, 0);
+
+      const source = entry.audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(entry.destination);
+
+      const now = entry.audioContext.currentTime;
+      if (!entry.nextStartTime || entry.nextStartTime < now + 0.04) {
+        entry.nextStartTime = now + 0.08;
+      }
+      source.start(entry.nextStartTime);
+      entry.nextStartTime += buffer.duration;
+      entry.chunksReceived += 1;
+
+      if (!entry.resolved) {
+        entry.resolved = true;
+        window.clearTimeout(entry.setupTimer);
+        console.log('[NEKO-MIC main] PCM relay stream resolved', requestId.substring(0, 8), 'ctxState:', entry.audioContext.state);
+        monitorReceivedAudio(entry.stream, requestId);
+        armPcmIdleCleanup(requestId, entry);
+        scheduleAudioContextResumes();
+        entry.resolve(entry.stream);
+      }
+
+      if (Number(data.level) > 0.02 && entry.chunksReceived % 20 === 1) {
+        console.log('[NEKO-MIC main] PCM chunk scheduled', requestId.substring(0, 8), 'samples:', samples.length, 'level:', data.level, 'ctxState:', entry.audioContext.state);
+      }
+      if (Number(data.level) > 0.015) {
+        entry.lastNonSilentAt = performance.now();
+      }
+    } catch (err) {
+      rejectPcmRelay(requestId, err);
+    }
+  }
+
+  function decodePcm16Base64(base64) {
+    const binary = atob(base64);
+    const length = Math.floor(binary.length / 2);
+    const samples = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      const lo = binary.charCodeAt(i * 2);
+      const hi = binary.charCodeAt(i * 2 + 1);
+      let value = lo | (hi << 8);
+      if (value >= 0x8000) {
+        value -= 0x10000;
+      }
+      samples[i] = value / 32768;
+    }
+    return samples;
+  }
+
+  function rejectPcmRelay(requestId, err) {
+    const entry = pcmRelayRequests.get(requestId);
+    if (!entry) {
+      return;
+    }
+    postToIsolated({ type: 'NEKO_PCM_STOP', requestId });
+    cleanupPcmRelay(requestId);
+    entry.reject(err);
+  }
+
+  function formatMediaError(err) {
+    if (!err) {
+      return 'unknown error';
+    }
+    const name = err.name || err.constructor?.name || 'Error';
+    const message = err.message || String(err);
+    return `${name}: ${message}`;
+  }
+
+  function stopPcmRelay(requestId) {
+    postToIsolated({ type: 'NEKO_PCM_STOP', requestId });
+    cleanupPcmRelay(requestId);
+  }
+
+  function cleanupPcmRelay(requestId) {
+    const entry = pcmRelayRequests.get(requestId);
+    if (!entry) {
+      return;
+    }
+    entry.closed = true;
+    window.clearTimeout(entry.setupTimer);
+    window.clearTimeout(entry.bridgeTimer);
+    window.clearTimeout(entry.idleTimer);
+    try { entry.audioContext.close(); } catch {}
+    pcmRelayRequests.delete(requestId);
+  }
+
+  function armPcmIdleCleanup(requestId, entry) {
+    const startedAt = performance.now();
+    const checkIdle = () => {
+      if (entry.closed) {
+        return;
+      }
+      const now = performance.now();
+      const heardAudio = entry.lastNonSilentAt > 0;
+      const age = now - startedAt;
+      const silentFor = heardAudio ? now - entry.lastNonSilentAt : age;
+
+      if ((!heardAudio && age > 3500) || (heardAudio && silentFor > 12000)) {
+        console.log('[NEKO-MIC main] PCM relay idle cleanup', requestId.substring(0, 8), 'heardAudio:', heardAudio);
+        stopPcmRelay(requestId);
+        return;
+      }
+
+      entry.idleTimer = window.setTimeout(checkIdle, 1500);
+    };
+
+    entry.idleTimer = window.setTimeout(checkIdle, 3500);
+  }
+
+  async function relayAudioViaWebRTC(constraints) {
+    const requestId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random());
+    const pc = new RTCPeerConnection();
+    let resolvePromise;
+    let rejectPromise;
+    const streamPromise = new Promise((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+    const entry = {
+      pc,
+      resolve: resolvePromise,
+      reject: rejectPromise,
+      setupTimer: null,
+      pendingIce: [],
+      remoteDescriptionSet: false,
+      resolved: false
+    };
+    pendingRequests.set(requestId, entry);
+
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+
+    pc.ontrack = (event) => {
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      const track = event.track;
+      console.log('[NEKO-MIC main] ontrack:', event.track.kind, 'readyState:', event.track.readyState, 'muted:', event.track.muted, 'enabled:', event.track.enabled);
+      console.log('[NEKO-MIC main] Received track settings:', event.track.getSettings());
+      track.onmute = () => console.log('[NEKO-MIC main] track muted', requestId.substring(0, 8));
+      track.onended = () => cleanupRequest(requestId);
+      waitForTrackUnmuted(track, requestId)
+        .then(() => resolveRequest(requestId, stream))
+        .catch((err) => rejectRequest(requestId, err));
+    };
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        postToIsolated({ type: 'NEKO_MEDIA_SIGNAL', requestId, ice: event.candidate.toJSON() });
+      }
+    };
+    pc.oniceconnectionstatechange = () => {
+      console.log('[NEKO-MIC main] ICE state:', pc.iceConnectionState);
+    };
+    pc.onicegatheringstatechange = () => {
+      console.log('[NEKO-MIC main] ICE gathering state:', pc.iceGatheringState);
+    };
+    pc.onconnectionstatechange = () => {
+      console.log('[NEKO-MIC main] PC state:', pc.connectionState);
+      if (['closed', 'failed'].includes(pc.connectionState)) {
+        rejectRequest(requestId, new DOMException('WebRTC connection ' + pc.connectionState, 'NetworkError'));
+      }
+    };
+
+    entry.setupTimer = window.setTimeout(() => {
+      if (!entry.resolved) {
+        rejectRequest(requestId, new DOMException('Mic relay timeout', 'TimeoutError'));
+      }
+    }, 10000);
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGatheringComplete(pc, 1500);
+      console.log('[NEKO-MIC main] Sent offer');
+      postToIsolated({ type: 'NEKO_MEDIA_REQUEST', requestId, constraints, sdp: pc.localDescription.toJSON() });
+      monitorInboundRtp(pc);
+    } catch (err) {
+      rejectRequest(requestId, err);
+    }
+
+    return streamPromise;
+  }
+
+  function monitorInboundRtp(pc) {
+    let lastPacketsReceived = 0;
+    let lastAudioEnergy = 0;
+    const intervalId = setInterval(async () => {
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            const deltaPackets = Number(report.packetsReceived || 0) - lastPacketsReceived;
+            const audioEnergy = Number(report.totalAudioEnergy || 0);
+            const deltaEnergy = audioEnergy - lastAudioEnergy;
+            lastPacketsReceived = Number(report.packetsReceived || 0);
+            lastAudioEnergy = audioEnergy;
+            console.log('[NEKO-MIC main] Inbound RTP packetsReceived:', report.packetsReceived, 'delta:', deltaPackets, 'bytesReceived:', report.bytesReceived, 'audioLevel:', report.audioLevel, 'deltaEnergy:', deltaEnergy);
+          }
+        });
+      } catch {}
+    }, 1000);
+    setTimeout(() => clearInterval(intervalId), 15000);
+  }
+
+  function waitForTrackUnmuted(track, requestId) {
+    if (!track.muted) {
+      console.log('[NEKO-MIC main] track already unmuted', requestId.substring(0, 8));
+      return Promise.resolve();
+    }
+
+    console.log('[NEKO-MIC main] Waiting for track unmute', requestId.substring(0, 8));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        track.removeEventListener('unmute', onUnmute);
+        track.removeEventListener('ended', onEnded);
+        clearTimeout(timer);
+      };
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        console.log('[NEKO-MIC main] track unmuted', requestId.substring(0, 8));
+        scheduleAudioContextResumes();
+        resolve();
+      };
+      const fail = (err) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+      const onUnmute = () => finish();
+      const onEnded = () => fail(new DOMException('Mic relay track ended before audio started', 'AbortError'));
+      const timer = setTimeout(() => {
+        fail(new DOMException('Mic relay track stayed muted', 'TimeoutError'));
+      }, 6000);
+      track.addEventListener('unmute', onUnmute, { once: true });
+      track.addEventListener('ended', onEnded, { once: true });
+    });
+  }
+
+  function waitForIceGatheringComplete(pc, timeoutMs) {
+    if (pc.iceGatheringState === 'complete') {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        pc.removeEventListener('icegatheringstatechange', onStateChange);
+        resolve();
+      };
+      const onStateChange = () => {
+        if (pc.iceGatheringState === 'complete') {
+          finish();
+        }
+      };
+      const timer = setTimeout(finish, timeoutMs);
+      pc.addEventListener('icegatheringstatechange', onStateChange);
+    });
+  }
+
+  function postToIsolated(data) {
+    if (data.type && data.type.startsWith('NEKO_PCM_') && window.parent && window.parent !== window) {
+      if (floatingPcmPort) {
+        try {
+          floatingPcmPort.postMessage({ ...data, _sender: 'main' });
+          return;
+        } catch {
+          floatingPcmPort = null;
+        }
+      }
+      window.parent.postMessage({ ...data, _sender: 'main' }, '*');
+      return;
+    }
+    window.postMessage({ ...data, _sender: 'main' }, window.location.origin);
+  }
+
+  function attachFloatingPcmPort(port) {
+    if (floatingPcmPort) {
+      try { floatingPcmPort.close(); } catch {}
+    }
+    floatingPcmPort = port;
+    floatingPcmPort.onmessage = (event) => {
+      const data = event.data;
+      if (!data || typeof data.type !== 'string' || !data.type.startsWith('NEKO_PCM_')) {
+        return;
+      }
+      handlePcmRelayMessage(data);
+    };
+    floatingPcmPort.onmessageerror = () => {
+      floatingPcmPort = null;
+    };
+    try { floatingPcmPort.start(); } catch {}
+    console.log('[NEKO-MIC main] PCM MessagePort attached');
+  }
+
+  function handleIsolatedMessage(data) {
+    const entry = pendingRequests.get(data.requestId);
+    if (!entry) {
+      return;
+    }
+    if (data.error) {
+      rejectRequest(data.requestId, new DOMException(data.error.message || 'Mic relay error', data.error.name || 'UnknownError'));
+      return;
+    }
+    if (data.sdp) {
+      if (entry.pc.signalingState !== 'have-local-offer') {
+        console.warn('[NEKO-MIC main] Ignored SDP in signalingState:', entry.pc.signalingState, data.requestId?.substring?.(0, 8));
+        return;
+      }
+      entry.pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+        .then(() => {
+          entry.remoteDescriptionSet = true;
+          flushPendingIce(entry);
+        })
+        .catch((err) => {
+          rejectRequest(data.requestId, err);
+        });
+      return;
+    }
+    if (data.ice) {
+      addIceCandidateSafe(entry, data.ice);
+    }
+  }
+
+  function addIceCandidateSafe(entry, ice) {
+    if (!entry || !ice) {
+      return;
+    }
+    if (!entry.remoteDescriptionSet && !entry.pc.remoteDescription) {
+      entry.pendingIce.push(ice);
+      return;
+    }
+    entry.pc.addIceCandidate(new RTCIceCandidate(ice)).catch((err) => {
+      console.warn('[NEKO-MIC main] addIceCandidate failed:', err);
+    });
+  }
+
+  function flushPendingIce(entry) {
+    const pendingIce = entry.pendingIce.splice(0);
+    pendingIce.forEach((ice) => addIceCandidateSafe(entry, ice));
+  }
+
+  function resolveRequest(requestId, stream) {
+    const entry = pendingRequests.get(requestId);
+    if (!entry || entry.resolved) {
+      return;
+    }
+    entry.resolved = true;
+    window.clearTimeout(entry.setupTimer);
+    monitorReceivedAudio(stream, requestId);
+    scheduleAudioContextResumes();
+    entry.resolve(stream);
+  }
+
+  function rejectRequest(requestId, err) {
+    const entry = pendingRequests.get(requestId);
+    if (!entry) {
+      return;
+    }
+    if (entry.resolved) {
+      cleanupRequest(requestId);
+      return;
+    }
+    window.clearTimeout(entry.setupTimer);
+    try { entry.pc.close(); } catch {}
+    pendingRequests.delete(requestId);
+    entry.reject(err);
+  }
+
+  function cleanupRequest(requestId) {
+    const entry = pendingRequests.get(requestId);
+    if (!entry) {
+      return;
+    }
+    window.clearTimeout(entry.setupTimer);
+    try { entry.pc.close(); } catch {}
+    pendingRequests.delete(requestId);
+  }
+
+  function monitorReceivedAudio(stream, requestId) {
+    try {
+      const shortId = requestId.substring(0, 8);
+      const ctx = new AudioContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let tick = 0;
+      const intervalId = setInterval(() => {
+        resumeAudioContext(ctx);
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / dataArray.length;
+        const max = Math.max.apply(null, Array.from(dataArray));
+        if (max > 0 || tick === 0) {
+          console.log('[NEKO-MIC main] Received audio level avg:', avg.toFixed(2), 'max:', max, 'tick:', tick, 'ctxState:', ctx.state, shortId);
+        }
+        tick++;
+        if (tick > 20) {
+          clearInterval(intervalId);
+          try { ctx.close(); } catch {}
+        }
+      }, 500);
+    } catch (e) {
+      console.warn('[NEKO-MIC main] Received audio monitor failed:', e);
+    }
+  }
+
+  function scheduleAudioContextResumes() {
+    [0, 50, 150, 400, 1000].forEach((delay) => {
+      window.setTimeout(resumeTrackedAudioContexts, delay);
+    });
+  }
+
+  function forceTransparentRenderers() {
+    makePixiTransparent(window.live2dManager && window.live2dManager.pixi_app);
+    makeThreeTransparent(window.vrmManager && window.vrmManager.renderer);
+    makeThreeTransparent(window.mmdManager && window.mmdManager.renderer);
+    makeThreeTransparent(window.vrmManager && window.vrmManager.manager && window.vrmManager.manager.renderer);
+    makeThreeTransparent(window.mmdManager && window.mmdManager.manager && window.mmdManager.manager.renderer);
+  }
+
+  function forcePageReflow() {
+    window.dispatchEvent(new Event('resize'));
+
+    forceTransparentRenderers();
+  }
+
+  function makePixiTransparent(app) {
+    if (!app || !app.renderer) {
+      return;
+    }
+
+    const renderer = app.renderer;
+    setCanvasTransparent(renderer.view || app.view);
+
+    trySet(renderer, 'backgroundAlpha', 0);
+    trySet(renderer, 'transparent', true);
+
+    if (renderer.options) {
+      trySet(renderer.options, 'backgroundAlpha', 0);
+      trySet(renderer.options, 'transparent', true);
+    }
+
+    if (renderer.background) {
+      trySet(renderer.background, 'alpha', 0);
+      trySet(renderer.background, 'color', 0x000000);
+      if (typeof renderer.background.clearBeforeRender === 'boolean') {
+        renderer.background.clearBeforeRender = true;
+      }
+    }
+
+    if (Array.isArray(renderer._backgroundColorRgba) && renderer._backgroundColorRgba.length >= 4) {
+      renderer._backgroundColorRgba[3] = 0;
+    }
+
+    if (typeof renderer.clear === 'function') {
+      try {
+        renderer.clear();
+      } catch {}
+    }
+
+    if (typeof renderer.render === 'function' && app.stage) {
+      try {
+        renderer.render(app.stage);
+      } catch {}
+    }
+  }
+
+  function makeThreeTransparent(renderer) {
+    if (!renderer) {
+      return;
+    }
+
+    setCanvasTransparent(renderer.domElement);
+
+    if (typeof renderer.setClearColor === 'function') {
+      try {
+        renderer.setClearColor(0x000000, 0);
+      } catch {}
+    }
+
+    if (typeof renderer.setClearAlpha === 'function') {
+      try {
+        renderer.setClearAlpha(0);
+      } catch {}
+    }
+  }
+
+  function setCanvasTransparent(canvas) {
+    if (!canvas || !canvas.style) {
+      return;
+    }
+
+    canvas.style.setProperty('background', 'transparent', 'important');
+    canvas.style.setProperty('background-color', 'transparent', 'important');
+  }
+
+  function trySet(target, key, value) {
+    try {
+      target[key] = value;
+    } catch {}
+  }
+})();

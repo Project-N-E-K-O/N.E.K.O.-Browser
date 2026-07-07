@@ -1,0 +1,79 @@
+{
+  "manifest_version": 3,
+  "name": "N.E.K.O Floating WebUI",
+  "description": "Show the local N.E.K.O WebUI as a floating panel on web pages.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Toggle N.E.K.O Floating WebUI"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://localhost:48911 http://127.0.0.1:48911; frame-src http://localhost:48911 http://127.0.0.1:48911;"
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "scripting",
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:48911/*",
+    "http://127.0.0.1:48911/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://localhost:48911/*",
+        "http://127.0.0.1:48911/*"
+      ],
+      "css": [
+        "transparent-page.css"
+      ],
+      "js": [
+        "transparent-page.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "http://localhost:48911/*",
+        "http://127.0.0.1:48911/*"
+      ],
+      "js": [
+        "transparent-main-world.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "floating.html",
+        "floating.js",
+        "floating.css",
+        "transparent-page.css",
+        "transparent-main-world.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

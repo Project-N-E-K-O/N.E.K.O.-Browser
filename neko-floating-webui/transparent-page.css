@@ -1,0 +1,55 @@
+html.neko-floating-webui-transparent,
+html.neko-floating-webui-transparent body,
+body.neko-floating-webui-transparent,
+html.neko-floating-webui-transparent:not(.lanlan-pet-mode),
+body.neko-floating-webui-transparent:not(.lanlan-pet-mode):not(.electron-chat-window) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+@media only screen and (max-width: 768px) {
+  html.neko-floating-webui-transparent,
+  html.neko-floating-webui-transparent:not(.lanlan-pet-mode),
+  html.neko-floating-webui-transparent[data-theme="dark"]:not(.lanlan-pet-mode),
+  html.neko-floating-webui-transparent body,
+  html.neko-floating-webui-transparent body:not(.lanlan-pet-mode):not(.electron-chat-window),
+  html.neko-floating-webui-transparent[data-theme="dark"] body:not(.electron-chat-window),
+  body.neko-floating-webui-transparent,
+  body.neko-floating-webui-transparent:not(.lanlan-pet-mode):not(.electron-chat-window) {
+    background: transparent !important;
+    background-color: transparent !important;
+  }
+}
+
+html.neko-floating-webui-transparent #live2d-container,
+html.neko-floating-webui-transparent #mmd-container,
+html.neko-floating-webui-transparent #vrm-container,
+html.neko-floating-webui-transparent #pngtuber-container,
+html.neko-floating-webui-transparent #live2d-canvas,
+html.neko-floating-webui-transparent #mmd-canvas,
+html.neko-floating-webui-transparent #vrm-canvas,
+html.neko-floating-webui-transparent canvas {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html.neko-floating-webui-transparent #chat-container,
+html.neko-floating-webui-transparent #chat-container::before {
+  background: transparent !important;
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.neko-floating-webui-transparent #status-toast {
+  background-image: none !important;
+  background-color: rgba(15, 23, 42, 0.78) !important;
+}
+
+html.neko-floating-webui-transparent[data-theme="dark"] #chat-container,
+html.neko-floating-webui-transparent[data-theme="dark"] #chat-container::before {
+  background: transparent !important;
+  background-color: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
