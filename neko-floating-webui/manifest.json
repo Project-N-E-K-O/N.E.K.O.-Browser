@@ -65,9 +65,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "floating.html",
-        "floating.js",
-        "floating.css",
         "transparent-page.css",
         "transparent-main-world.js"
       ],

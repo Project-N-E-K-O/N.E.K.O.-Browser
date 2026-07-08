@@ -30,16 +30,14 @@
       return;
     }
     if (event.data.type === 'NEKO_PCM_PORT') {
-      if (event.source === window.parent && typeof event.origin === 'string' && event.origin.startsWith('chrome-extension://') && event.ports && event.ports[0]) {
+      if (event.source === window.parent && event.ports && event.ports[0]) {
         attachFloatingPcmPort(event.ports[0]);
       }
       return;
     }
     const fromIsolated = event.source === window && event.data._sender === 'isolated';
     const fromFloating = event.source === window.parent
-      && event.data._sender === 'floating'
-      && typeof event.origin === 'string'
-      && event.origin.startsWith('chrome-extension://');
+      && event.data._sender === 'floating';
     if (!fromIsolated && !fromFloating) {
       return;
     }

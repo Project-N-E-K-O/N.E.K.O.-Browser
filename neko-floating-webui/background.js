@@ -128,8 +128,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   }
 
   const state = await getStoredState();
-  if (state.activeTabId === tabId) {
-    await chrome.storage.local.set({ activeTabId: null });
+  if (state.activeTabId !== tabId) {
+    return;
+  }
+
+  const tab = await getTab(tabId);
+  if (!tab || !isInjectableTab(tab.url)) {
+    await chrome.storage.local.set({ activeTabId: null, minimized: true });
   }
 });
 
@@ -165,6 +170,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({ ok: Boolean(url) });
     return false;
+  }
+
+  if (message.type === 'NEKO_HEALTH_CHECK') {
+    performHealthCheck().then(sendResponse);
+    return true;
   }
 
   if (message.type === 'NEKO_AUTO_ATTACH' && sender.tab?.id) {
@@ -450,9 +460,22 @@ function schedulePanelSweep() {
 
 async function sweepPanelSingleton() {
   const state = await getStoredState();
-  const activeTabId = state.enabled && state.minimized === false
-    ? await getLiveActiveTabId(state)
-    : null;
+  if (!state.enabled || state.minimized !== false) {
+    return;
+  }
+
+  let activeTabId = await getLiveActiveTabId(state);
+  if (!activeTabId) {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+    if (tab?.id && isInjectableTab(tab.url)) {
+      activeTabId = tab.id;
+      await chrome.storage.local.set({ activeTabId: tab.id });
+    } else {
+      await enforceSingleActivePanel(null);
+      return;
+    }
+  }
+
   const unloadedAny = await enforceSingleActivePanel(activeTabId);
   if (unloadedAny) {
     console.log('[N.E.K.O Floating] WS singleton sweep unloaded stale panels. activeTabId:', activeTabId);
@@ -524,6 +547,21 @@ function normalizeNekoUrl(url) {
   return null;
 }
 
+async function performHealthCheck() {
+  const state = await getStoredState();
+  const webuiUrl = state.webuiUrl || DEFAULT_STATE.webuiUrl;
+  try {
+    const healthUrl = new URL('/api/config/page_config', webuiUrl);
+    const response = await fetch(healthUrl.toString(), {
+      method: 'GET',
+      cache: 'no-store'
+    });
+    return { online: response.ok };
+  } catch {
+    return { online: false };
+  }
+}
+
 async function handleMediaRequest(message, sender) {
   if (!sender.tab?.id) {
     return;
@@ -541,8 +579,8 @@ async function handleMediaRequest(message, sender) {
 
 async function handlePcmStart(message, sender) {
   if (message.fromFloating) {
-    mediaRoutes.set(message.requestId, { extensionPage: true });
-    console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'floating-extension-page');
+    mediaRoutes.set(message.requestId, { extensionPage: true, tabId: sender.tab?.id, frameId: sender.frameId });
+    console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'floating tab:', sender.tab?.id, 'frame:', sender.frameId);
   } else if (sender.tab?.id) {
     mediaRoutes.set(message.requestId, { tabId: sender.tab.id, frameId: sender.frameId });
     console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'tab:', sender.tab.id, 'frame:', sender.frameId);
@@ -598,7 +636,7 @@ function routeSignalToContent(message) {
     return;
   }
   if (route.extensionPage) {
-    chrome.runtime.sendMessage({
+    const payload = {
       type: 'NEKO_PCM_TO_FLOATING',
       payloadType: message.type,
       requestId: message.requestId,
@@ -607,7 +645,12 @@ function routeSignalToContent(message) {
       pcm16: message.pcm16,
       sampleRate: message.sampleRate,
       level: message.level
-    }).catch(() => {});
+    };
+    if (route.tabId !== undefined) {
+      chrome.tabs.sendMessage(route.tabId, payload, { frameId: route.frameId }).catch(() => {});
+    } else {
+      chrome.runtime.sendMessage(payload).catch(() => {});
+    }
     return;
   }
   chrome.tabs.sendMessage(route.tabId, {
