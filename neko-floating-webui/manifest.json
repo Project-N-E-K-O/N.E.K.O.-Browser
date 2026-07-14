@@ -47,7 +47,8 @@
         "http://127.0.0.1:48911/*"
       ],
       "css": [
-        "transparent-page.css"
+        "transparent-page.css",
+        "embedded-surface.css"
       ],
       "js": [
         "transparent-page.js"
@@ -61,7 +62,8 @@
         "http://127.0.0.1:48911/*"
       ],
       "js": [
-        "transparent-main-world.js"
+        "transparent-main-world.js",
+        "embedded-surface-main-world.js"
       ],
       "run_at": "document_start",
       "all_frames": true,

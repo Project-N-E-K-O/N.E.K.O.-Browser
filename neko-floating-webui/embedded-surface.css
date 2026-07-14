@@ -1,0 +1,95 @@
+/*
+ * Component presentation layer for the root page's surface=embed mode.
+ *
+ * The regular home page keeps owning all application/session state.  This
+ * stylesheet only changes which visual surfaces are exposed by the embed
+ * endpoint, so the existing Avatar, React Chat and subtitle implementations
+ * can be reused without starting duplicate connections.
+ */
+
+html.neko-embedded-surface,
+html.neko-embedded-surface body,
+html.neko-embedded-surface:not(.lanlan-pet-mode),
+html.neko-embedded-surface body:not(.electron-chat-window) {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+html.neko-embedded-surface body::before,
+html.neko-embedded-surface body::after {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #live2d-container,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #live2d-canvas,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #vrm-container,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #vrm-canvas,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #mmd-container,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #mmd-canvas,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #pngtuber-container,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #avatar-reaction-bubble,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] #avatar-reaction-bubble-debug-overlay {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+html.neko-embedded-surface[data-neko-surface-chat="off"] #chat-container,
+html.neko-embedded-surface[data-neko-surface-chat="off"] #react-chat-window-overlay,
+html.neko-embedded-surface[data-neko-surface-chat="off"] #react-chat-window-shell,
+html.neko-embedded-surface[data-neko-surface-chat="off"] #react-chat-window-root,
+html.neko-embedded-surface[data-neko-surface-chat="off"] #chat-avatar-preview-popup,
+html.neko-embedded-surface[data-neko-surface-chat="off"] body > .compact-chat-choice-anchor,
+html.neko-embedded-surface[data-neko-surface-chat="off"] body > .avatar-tool-manager-overlay,
+html.neko-embedded-surface[data-neko-surface-chat="off"] body > .avatar-tool-manager-dialog,
+html.neko-embedded-surface[data-neko-surface-chat="off"] #crop-overlay,
+html.neko-embedded-surface[data-neko-surface-chat="off"] body > .jukebox-wrapper,
+html.neko-embedded-surface[data-neko-surface-chat="off"] body > .jukebox-sam-panel {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+html.neko-embedded-surface[data-neko-surface-subtitle="off"] #subtitle-display,
+html.neko-embedded-surface[data-neko-surface-subtitle="off"] #subtitle-settings-panel {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id$="-floating-buttons"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id$="-lock-icon"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id$="-return-button-container"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="live2d-popup-"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="vrm-popup-"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="mmd-popup-"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="pngtuber-popup-"],
+html.neko-embedded-surface[data-neko-surface-controls="off"] .live2d-popup,
+html.neko-embedded-surface[data-neko-surface-controls="off"] .vrm-popup,
+html.neko-embedded-surface[data-neko-surface-controls="off"] .mmd-popup,
+html.neko-embedded-surface[data-neko-surface-controls="off"] .pngtuber-popup,
+html.neko-embedded-surface[data-neko-surface-controls="off"] [data-neko-sidepanel] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+html.neko-embedded-surface[data-neko-surface-agent-hud="off"] #agent-task-hud,
+html.neko-embedded-surface[data-neko-surface-agent-hud="off"] #agent-task-hud-header {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+html.neko-embedded-surface[data-neko-surface-status="off"] #status-toast,
+html.neko-embedded-surface[data-neko-surface-status="off"] .neko-toast,
+html.neko-embedded-surface[data-neko-surface-status="off"] [data-neko-toast] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}

@@ -10,6 +10,7 @@
       color: #0f172a;
     }
     .section { padding: 12px 12px 14px; }
+    .section + .section { border-top: 1px solid rgba(15, 23, 42, 0.1); }
     h3 {
       margin: 0 0 8px;
       font-size: 11px;
@@ -56,6 +57,25 @@
       cursor: pointer;
     }
     .toggle:hover { background: #4338ca; }
+    .components {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+    }
+    .component-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .component-option input { margin: 0; }
+    .component-option span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .hint {
       margin: 10px 0 0;
       font-size: 11px;
@@ -69,6 +89,16 @@
       line-height: 1.4;
     }
     .error[hidden] { display: none; }
+    .setting-select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 9px;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 6px;
+      background: #ffffff;
+      color: inherit;
+      font: inherit;
+    }
   </style>
 </head>
 <body>
@@ -82,6 +112,27 @@
     <button type="button" class="toggle" id="toggle">显示 / 隐藏面板</button>
     <p class="hint" id="hint">全屏显示时可点击和拖动 Live2D；需要操作原网页时，点击右上角胶囊隐藏叠加层。</p>
     <p class="error" id="error" role="alert" hidden></p>
+  </div>
+  <div class="section">
+    <h3>聊天框模式</h3>
+    <select class="setting-select" id="chat-surface-mode">
+      <option value="auto">跟随页面</option>
+      <option value="compact">固定小聊天框</option>
+      <option value="full">固定大聊天框</option>
+    </select>
+    <p class="hint" id="chat-mode-hint">应用于浮窗和全屏页面。</p>
+  </div>
+  <div class="section">
+    <h3>界面组件</h3>
+    <div class="components" id="components">
+      <label class="component-option"><input type="checkbox" data-surface-component="avatar"><span>模型</span></label>
+      <label class="component-option"><input type="checkbox" data-surface-component="chat"><span>聊天框</span></label>
+      <label class="component-option"><input type="checkbox" data-surface-component="subtitle"><span>字幕</span></label>
+      <label class="component-option"><input type="checkbox" data-surface-component="controls"><span>模型按钮</span></label>
+      <label class="component-option"><input type="checkbox" data-surface-component="agent-hud"><span>任务 HUD</span></label>
+      <label class="component-option"><input type="checkbox" data-surface-component="status"><span>状态提示</span></label>
+    </div>
+    <p class="hint" id="components-hint">开关会立即同步到当前浮窗或全屏页面，并在下次打开时保留。</p>
   </div>
   <script src="popup.js"></script>
 </body>

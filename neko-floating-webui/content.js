@@ -7,11 +7,23 @@
   const MINIMIZED_SIZE = { width: 210, height: 48 };
   const MIN_SIZE = { width: 320, height: 420 };
   const WAKE_DRAG_THRESHOLD = 4;
+  const EMBED_PROTOCOL_VERSION = 1;
+  const EMBED_PROTOCOL_FALLBACK_MS = 1500;
+  const EMBED_SURFACE_COMPONENT_ORDER = Object.freeze([
+    'avatar',
+    'chat',
+    'subtitle',
+    'controls',
+    'agent-hud',
+    'status'
+  ]);
 
   const DEFAULT_STATE = {
     enabled: false,
     minimized: true,
     displayMode: 'floating',
+    surfaceComponents: EMBED_SURFACE_COMPONENT_ORDER.slice(),
+    chatSurfaceMode: 'auto',
     panel: {
       width: 420,
       height: 680,
@@ -33,6 +45,8 @@
   let currentPanel = { ...DEFAULT_STATE.panel };
   let webuiUrl = DEFAULT_STATE.webuiUrl;
   let displayMode = DEFAULT_STATE.displayMode;
+  let surfaceComponents = DEFAULT_STATE.surfaceComponents.slice();
+  let chatSurfaceMode = DEFAULT_STATE.chatSurfaceMode;
   let host = null;
   let shadow = null;
   let panel = null;
@@ -40,6 +54,7 @@
   let wakeButton = null;
   let toolbar = null;
   let routesEl = null;
+  let componentsEl = null;
   let offlineEl = null;
   let statusDot = null;
 
@@ -49,6 +64,15 @@
 
   const activePcmRelays = new Set();
   let pcmWebuiPort = null;
+  let embedReady = false;
+  let embedConnectSent = false;
+  let embedRegions = [];
+  let embedViewport = null;
+  let embedPointerLock = null;
+  let embedFallbackTimer = 0;
+  let embedHitTestSequence = 0;
+  let pendingEmbedHitTest = null;
+  let lastHostPointer = null;
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== 'string') {
@@ -123,6 +147,18 @@
       return false;
     }
 
+    if (message.type === 'NEKO_APPLY_SURFACE_COMPONENTS') {
+      const applied = applySurfaceComponents(message.surfaceComponents);
+      sendResponse({ ok: true, surfaceComponents: applied });
+      return false;
+    }
+
+    if (message.type === 'NEKO_APPLY_CHAT_SURFACE_MODE') {
+      const applied = applyChatSurfaceMode(message.chatSurfaceMode);
+      sendResponse({ ok: true, chatSurfaceMode: applied });
+      return false;
+    }
+
     return false;
   });
 
@@ -134,7 +170,14 @@
       return;
     }
     const data = event.data;
-    if (!data || data._sender !== 'main' || typeof data.type !== 'string') {
+    if (!data || typeof data.type !== 'string') {
+      return;
+    }
+    if (data._sender === 'neko-embedded-surface') {
+      handleEmbedMessage(data);
+      return;
+    }
+    if (data._sender !== 'main') {
       return;
     }
     if (data.type === 'NEKO_PCM_START' || data.type === 'NEKO_PCM_STOP') {
@@ -159,6 +202,14 @@
     });
     applyPanelStyles(panel, currentPanel);
     saveState({ panel: currentPanel });
+  });
+
+  window.addEventListener('pointermove', handleHostPointerMove, true);
+  window.addEventListener('blur', () => {
+    if (embedPointerLock !== null) {
+      embedPointerLock = null;
+      updateFrameInteractionFromLastPointer('window-blur');
+    }
   });
 
   window.addEventListener('pagehide', stopAllPcmRelays);
@@ -229,12 +280,16 @@
     });
     webuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
     displayMode = normalizeDisplayMode(state.displayMode);
+    surfaceComponents = normalizeSurfaceComponents(state.surfaceComponents);
+    chatSurfaceMode = normalizeChatSurfaceMode(state.chatSurfaceMode);
+    syncSurfaceComponentControls();
     panel.dataset.displayMode = displayMode;
     panel.hidden = false;
     applyPanelStyles(panel, currentPanel);
   }
 
   function applyDisplayMode(mode) {
+    const previousMode = displayMode;
     displayMode = mode;
     if (mode === 'sidebar') {
       closePanel();
@@ -244,6 +299,9 @@
       ensurePanel();
     }
     panel.dataset.displayMode = mode;
+    if (previousMode !== mode) {
+      resetEmbedPassthrough('display-mode-change');
+    }
     if (mode === 'fullscreen') {
       if (panel.dataset.minimized !== 'true') {
         ensureFrameLoaded();
@@ -295,7 +353,8 @@
         font-family: Inter, "Segoe UI", Arial, sans-serif;
       }
 
-      #${PANEL_ID}[data-routes-open="true"] {
+      #${PANEL_ID}[data-routes-open="true"],
+      #${PANEL_ID}[data-components-open="true"] {
         grid-template-rows: 42px auto minmax(0, 1fr);
       }
 
@@ -347,6 +406,7 @@
 
       #${PANEL_ID}[data-minimized="true"] .toolbar,
       #${PANEL_ID}[data-minimized="true"] .routes,
+      #${PANEL_ID}[data-minimized="true"] .component-switches,
       #${PANEL_ID}[data-minimized="true"] .content,
       #${PANEL_ID}[data-minimized="true"] .resize {
         display: none;
@@ -450,6 +510,49 @@
         font-size: 12px;
       }
 
+      .component-switches {
+        grid-row: 2;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+        background: rgba(248, 250, 252, 0.94);
+        backdrop-filter: blur(14px);
+      }
+
+      .component-switches[hidden] {
+        display: none;
+      }
+
+      .component-switches-title {
+        grid-column: 1 / -1;
+        color: #475569;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .component-switch-option {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        cursor: pointer;
+        font-size: 12px;
+        user-select: none;
+      }
+
+      .component-switch-option input {
+        flex: 0 0 auto;
+        margin: 0;
+      }
+
+      .component-switch-option span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       .content {
         grid-row: 3;
         position: relative;
@@ -542,6 +645,7 @@
 
       #${PANEL_ID}[data-display-mode="fullscreen"] .toolbar,
       #${PANEL_ID}[data-display-mode="fullscreen"] .routes,
+      #${PANEL_ID}[data-display-mode="fullscreen"] .component-switches,
       #${PANEL_ID}[data-display-mode="fullscreen"] .resize,
       #${PANEL_ID}[data-display-mode="fullscreen"] .offline {
         display: none !important;
@@ -555,6 +659,10 @@
         width: 100% !important;
         height: 100% !important;
         background: transparent !important;
+        pointer-events: none !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"][data-embed-interactive="true"] #${FRAME_ID} {
         pointer-events: auto !important;
       }
 
@@ -597,7 +705,10 @@
     panel.hidden = true;
     panel.dataset.minimized = 'true';
     panel.dataset.routesOpen = 'false';
+    panel.dataset.componentsOpen = 'false';
     panel.dataset.displayMode = 'floating';
+    panel.dataset.embedInteractive = 'false';
+    panel.dataset.embedProtocol = 'idle';
 
     wakeButton = document.createElement('button');
     wakeButton.id = WAKE_ID;
@@ -628,6 +739,7 @@
       <nav class="actions" aria-label="浮窗操作">
         <button type="button" data-action="reload" title="刷新 WebUI" aria-label="刷新 WebUI">↻</button>
         <button type="button" data-action="routes" title="入口" aria-label="入口">☰</button>
+        <button type="button" data-action="components" title="组件开关" aria-label="组件开关">▦</button>
         <button type="button" data-action="open" title="打开完整页面" aria-label="打开完整页面">↗</button>
         <button type="button" data-action="minimize" title="最小化" aria-label="最小化">−</button>
         <button type="button" data-action="close" title="关闭" aria-label="关闭">×</button>
@@ -647,6 +759,22 @@
       <button type="button" data-route="/memory_browser">记忆</button>
     `;
     routesEl = routesContainer;
+
+    const componentSwitches = document.createElement('div');
+    componentSwitches.className = 'component-switches';
+    componentSwitches.dataset.components = '';
+    componentSwitches.hidden = true;
+    componentSwitches.innerHTML = `
+      <div class="component-switches-title">界面组件</div>
+      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="avatar"><span>模型</span></label>
+      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="chat"><span>聊天框</span></label>
+      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="subtitle"><span>字幕</span></label>
+      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="controls"><span>模型按钮</span></label>
+      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="agent-hud"><span>任务 HUD</span></label>
+      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="status"><span>状态提示</span></label>
+    `;
+    componentsEl = componentSwitches;
+    syncSurfaceComponentControls();
 
     const contentEl = document.createElement('main');
     contentEl.className = 'content';
@@ -678,7 +806,7 @@
     resizeSE.className = 'resize resize-se';
     resizeSE.dataset.resize = 'se';
 
-    panel.append(wakeButton, toolbar, routesContainer, contentEl, resizeE, resizeS, resizeSE);
+    panel.append(wakeButton, toolbar, routesContainer, componentSwitches, contentEl, resizeE, resizeS, resizeSE);
     shadow.append(style, panel);
 
     bindToolbarDrag(toolbar);
@@ -698,6 +826,12 @@
         openRoute(routeButton.dataset.route);
       }
     });
+    shadow.addEventListener('change', (event) => {
+      const componentInput = event.target.closest('[data-floating-surface-component]');
+      if (componentInput) {
+        updateSurfaceComponentsFromFloatingPanel();
+      }
+    });
   }
 
   function handleAction(action) {
@@ -705,9 +839,10 @@
       if (offlineEl) offlineEl.hidden = true;
       setOnline(null);
       if (frame) {
-        const target = webuiUrl || DEFAULT_STATE.webuiUrl;
-      try { frame.src = 'about:blank'; } catch {}
-      frame.src = target;
+        const target = getFrameTargetUrl();
+        resetEmbedPassthrough('manual-reload');
+        try { frame.src = 'about:blank'; } catch {}
+        frame.src = target;
       }
       checkHealth();
       return;
@@ -715,6 +850,12 @@
 
     if (action === 'routes') {
       setRoutesOpen(routesEl?.hidden === true);
+      scheduleWebuiReflow();
+      return;
+    }
+
+    if (action === 'components') {
+      setComponentsOpen(componentsEl?.hidden === true);
       scheduleWebuiReflow();
       return;
     }
@@ -746,6 +887,59 @@
     }
     routesEl.hidden = !open;
     panel.dataset.routesOpen = String(open);
+    if (open && componentsEl) {
+      componentsEl.hidden = true;
+      panel.dataset.componentsOpen = 'false';
+    }
+  }
+
+  function setComponentsOpen(open) {
+    if (!componentsEl || !panel) {
+      return;
+    }
+    componentsEl.hidden = !open;
+    panel.dataset.componentsOpen = String(open);
+    if (open && routesEl) {
+      routesEl.hidden = true;
+      panel.dataset.routesOpen = 'false';
+    }
+    syncSurfaceComponentControls();
+  }
+
+  function syncSurfaceComponentControls() {
+    if (!componentsEl) {
+      return;
+    }
+    const selected = new Set(surfaceComponents);
+    componentsEl.querySelectorAll('[data-floating-surface-component]').forEach((input) => {
+      input.checked = selected.has(input.dataset.floatingSurfaceComponent);
+    });
+  }
+
+  function updateSurfaceComponentsFromFloatingPanel() {
+    if (!componentsEl) {
+      return;
+    }
+    const previous = surfaceComponents.slice();
+    const next = EMBED_SURFACE_COMPONENT_ORDER.filter((component) => {
+      const input = componentsEl.querySelector(`[data-floating-surface-component="${component}"]`);
+      return input?.checked === true;
+    });
+    applySurfaceComponents(next);
+    chrome.runtime.sendMessage({
+      type: 'NEKO_SET_SURFACE_COMPONENTS',
+      surfaceComponents: next
+    }).then((response) => {
+      if (response?.ok === false) {
+        applySurfaceComponents(previous);
+        return;
+      }
+      if (Array.isArray(response?.surfaceComponents)) {
+        applySurfaceComponents(response.surfaceComponents);
+      }
+    }).catch(() => {
+      applySurfaceComponents(previous);
+    });
   }
 
   function openRoute(path) {
@@ -760,6 +954,7 @@
     setOnline(true);
     scheduleWebuiReflow();
     setupPcmMessagePort();
+    startEmbeddedSurfaceHandshake();
     checkHealth();
   }
 
@@ -809,13 +1004,17 @@
     if (!frame) {
       return;
     }
-    const target = webuiUrl || DEFAULT_STATE.webuiUrl;
+    const target = getFrameTargetUrl();
     try {
       const current = frame.src;
       if (current && new URL(current).toString() === new URL(target).toString()) {
+        if (!embedReady && isEmbeddedSurfaceActive()) {
+          startEmbeddedSurfaceHandshake();
+        }
         return;
       }
     } catch {}
+    resetEmbedPassthrough('frame-navigation');
     frame.src = target;
   }
 
@@ -823,6 +1022,7 @@
     if (!frame) {
       return;
     }
+    resetEmbedPassthrough('frame-unload');
     try { frame.src = 'about:blank'; } catch {}
     frame.removeAttribute('src');
   }
@@ -1032,6 +1232,7 @@
   }
 
   function closePanel() {
+    resetEmbedPassthrough('panel-close');
     unloadFrame();
     stopAllPcmRelays();
     if (host) {
@@ -1044,11 +1245,290 @@
     wakeButton = null;
     toolbar = null;
     routesEl = null;
+    componentsEl = null;
     offlineEl = null;
     statusDot = null;
     dragSession = null;
     resizeSession = null;
     wakeDragSession = null;
+  }
+
+  function getFrameTargetUrl() {
+    const target = new URL(webuiUrl || DEFAULT_STATE.webuiUrl);
+    if (isEmbeddedDisplayMode(displayMode)) {
+      target.searchParams.set('surface', 'embed');
+      target.searchParams.set('components', surfaceComponents.length ? surfaceComponents.join(',') : 'none');
+      target.searchParams.set('chat_mode', chatSurfaceMode);
+    }
+    return target.toString();
+  }
+
+  function isEmbeddedSurfaceActive() {
+    return Boolean(
+      isEmbeddedDisplayMode(displayMode)
+      && panel
+      && frame
+      && panel.hidden !== true
+      && panel.dataset.minimized === 'false'
+    );
+  }
+
+  function isEmbedPassthroughActive() {
+    return Boolean(
+      displayMode === 'fullscreen'
+      && isEmbeddedSurfaceActive()
+    );
+  }
+
+  function resetEmbedPassthrough(reason) {
+    embedReady = false;
+    embedConnectSent = false;
+    embedRegions = [];
+    embedViewport = null;
+    embedPointerLock = null;
+    pendingEmbedHitTest = null;
+    if (embedFallbackTimer) {
+      window.clearTimeout(embedFallbackTimer);
+      embedFallbackTimer = 0;
+    }
+    if (panel) {
+      panel.dataset.embedInteractive = 'false';
+      panel.dataset.embedProtocol = reason || 'idle';
+    }
+  }
+
+  function startEmbeddedSurfaceHandshake() {
+    if (!isEmbeddedSurfaceActive()) {
+      return;
+    }
+    resetEmbedPassthrough('connecting');
+    sendEmbedConnect();
+    embedFallbackTimer = window.setTimeout(() => {
+      embedFallbackTimer = 0;
+      if (!isEmbeddedSurfaceActive() || embedReady) {
+        return;
+      }
+      panel.dataset.embedProtocol = 'legacy';
+      setFrameInteractive(true, 'legacy-fallback');
+    }, EMBED_PROTOCOL_FALLBACK_MS);
+  }
+
+  function sendEmbedConnect() {
+    if (!isEmbeddedSurfaceActive() || embedConnectSent) {
+      return;
+    }
+    embedConnectSent = true;
+    postEmbedMessage({
+      type: 'NEKO_EMBED_CONNECT',
+      protocolVersion: EMBED_PROTOCOL_VERSION,
+      components: surfaceComponents.slice(),
+      chatMode: chatSurfaceMode,
+      requestId: `connect-${Date.now()}`
+    });
+  }
+
+  function postEmbedMessage(payload) {
+    try {
+      frame?.contentWindow?.postMessage(payload, getWebuiOrigin());
+    } catch {}
+  }
+
+  function handleEmbedMessage(data) {
+    if (!isEmbeddedSurfaceActive() || !data.type.startsWith('NEKO_EMBED_')) {
+      return;
+    }
+
+    if (data.type === 'NEKO_EMBED_READY') {
+      embedReady = true;
+      if (embedFallbackTimer) {
+        window.clearTimeout(embedFallbackTimer);
+        embedFallbackTimer = 0;
+      }
+      panel.dataset.embedProtocol = 'ready';
+      sendEmbedConnect();
+      postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+      return;
+    }
+
+    if (data.type === 'NEKO_EMBED_INTERACTIVE_REGIONS') {
+      embedRegions = normalizeEmbedRegions(data.regions);
+      embedViewport = normalizeEmbedViewport(data.viewport);
+      updateFrameInteractionFromLastPointer('regions');
+      return;
+    }
+
+    if (data.type === 'NEKO_EMBED_COMPONENTS_CHANGED') {
+      postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+      return;
+    }
+
+    if (data.type === 'NEKO_EMBED_POINTER') {
+      handleEmbeddedPointer(data);
+      return;
+    }
+
+    if (data.type === 'NEKO_EMBED_HIT_TEST_RESULT') {
+      handleEmbedHitTestResult(data);
+    }
+  }
+
+  function normalizeEmbedRegions(regions) {
+    if (!Array.isArray(regions)) {
+      return [];
+    }
+    return regions.filter((region) => {
+      const rect = region?.rect;
+      return rect
+        && [rect.left, rect.top, rect.right, rect.bottom].every(Number.isFinite)
+        && rect.right > rect.left
+        && rect.bottom > rect.top;
+    }).map((region) => ({
+      component: String(region.component || ''),
+      kind: String(region.kind || 'ui'),
+      id: String(region.id || ''),
+      rect: {
+        left: Number(region.rect.left),
+        top: Number(region.rect.top),
+        right: Number(region.rect.right),
+        bottom: Number(region.rect.bottom)
+      }
+    }));
+  }
+
+  function normalizeEmbedViewport(viewport) {
+    const width = Number(viewport?.width);
+    const height = Number(viewport?.height);
+    if (!(width > 0) || !(height > 0)) {
+      return null;
+    }
+    return { width, height };
+  }
+
+  function handleHostPointerMove(event) {
+    lastHostPointer = { x: event.clientX, y: event.clientY };
+    if (!isEmbedPassthroughActive() || embedPointerLock !== null) {
+      return;
+    }
+    if (wakeButton && event.composedPath?.().includes(wakeButton)) {
+      setFrameInteractive(false, 'wake-button');
+      return;
+    }
+    updateFrameInteractionFromLastPointer('host-pointer');
+  }
+
+  function updateFrameInteractionFromLastPointer(reason) {
+    if (!isEmbedPassthroughActive() || embedPointerLock !== null || !lastHostPointer) {
+      return;
+    }
+    const point = hostPointToEmbedPoint(lastHostPointer.x, lastHostPointer.y);
+    const region = findEmbedRegionAtPoint(point.x, point.y);
+    setFrameInteractive(Boolean(region), reason);
+    if (region?.kind === 'model-bounds' && (region.id === 'vrm-model' || region.id === 'mmd-model')) {
+      requestEmbedHitTest(point.x, point.y, lastHostPointer);
+    } else {
+      pendingEmbedHitTest = null;
+    }
+  }
+
+  function setFrameInteractive(interactive, reason) {
+    if (!panel || displayMode !== 'fullscreen') {
+      return;
+    }
+    panel.dataset.embedInteractive = interactive ? 'true' : 'false';
+    if (reason) {
+      panel.dataset.embedInteractionReason = reason;
+    }
+  }
+
+  function hostPointToEmbedPoint(x, y) {
+    const rect = frame?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return { x, y };
+    }
+    const viewportWidth = embedViewport?.width || rect.width;
+    const viewportHeight = embedViewport?.height || rect.height;
+    return {
+      x: (x - rect.left) * viewportWidth / rect.width,
+      y: (y - rect.top) * viewportHeight / rect.height
+    };
+  }
+
+  function embedPointToHostPoint(x, y) {
+    const rect = frame?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return { x, y };
+    }
+    const viewportWidth = embedViewport?.width || rect.width;
+    const viewportHeight = embedViewport?.height || rect.height;
+    return {
+      x: rect.left + x * rect.width / viewportWidth,
+      y: rect.top + y * rect.height / viewportHeight
+    };
+  }
+
+  function findEmbedRegionAtPoint(x, y) {
+    return embedRegions.find((region) => (
+      x >= region.rect.left
+      && x <= region.rect.right
+      && y >= region.rect.top
+      && y <= region.rect.bottom
+    )) || null;
+  }
+
+  function requestEmbedHitTest(x, y, hostPoint) {
+    const requestId = `hit-${++embedHitTestSequence}`;
+    pendingEmbedHitTest = {
+      requestId,
+      hostX: hostPoint.x,
+      hostY: hostPoint.y
+    };
+    postEmbedMessage({ type: 'NEKO_EMBED_HIT_TEST', requestId, x, y });
+  }
+
+  function handleEmbedHitTestResult(data) {
+    if (!pendingEmbedHitTest || data.requestId !== pendingEmbedHitTest.requestId || embedPointerLock !== null) {
+      return;
+    }
+    const pending = pendingEmbedHitTest;
+    pendingEmbedHitTest = null;
+    if (!lastHostPointer
+        || Math.abs(lastHostPointer.x - pending.hostX) > 1
+        || Math.abs(lastHostPointer.y - pending.hostY) > 1) {
+      return;
+    }
+    setFrameInteractive(data.interactive === true, 'model-hit-test');
+  }
+
+  function handleEmbeddedPointer(data) {
+    const pointerId = Number.isFinite(Number(data.pointerId)) ? Number(data.pointerId) : 0;
+    const phase = String(data.phase || 'move');
+    const hostPoint = embedPointToHostPoint(Number(data.x) || 0, Number(data.y) || 0);
+    lastHostPointer = hostPoint;
+
+    if (phase === 'down') {
+      embedPointerLock = pointerId;
+      setFrameInteractive(true, 'pointer-drag');
+      return;
+    }
+
+    if (phase === 'up' || phase === 'cancel' || phase === 'leave') {
+      embedPointerLock = null;
+      setFrameInteractive(data.interactive === true, 'embedded-pointer-release');
+      return;
+    }
+
+    if (embedPointerLock !== null && Number(data.buttons) > 0) {
+      setFrameInteractive(true, 'pointer-drag');
+      return;
+    }
+
+    if (embedPointerLock !== null && Number(data.buttons) === 0) {
+      embedPointerLock = null;
+    }
+
+    if (embedPointerLock === null) {
+      setFrameInteractive(data.interactive === true, 'embedded-pointer');
+    }
   }
 
   function createHost() {
@@ -1137,6 +1617,49 @@
     return 'floating';
   }
 
+  function isEmbeddedDisplayMode(mode) {
+    return mode === 'floating' || mode === 'fullscreen';
+  }
+
+  function normalizeSurfaceComponents(value) {
+    if (!Array.isArray(value)) {
+      return EMBED_SURFACE_COMPONENT_ORDER.slice();
+    }
+    const selected = new Set(value.map((item) => String(item || '').trim().toLowerCase()));
+    return EMBED_SURFACE_COMPONENT_ORDER.filter((component) => selected.has(component));
+  }
+
+  function normalizeChatSurfaceMode(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === 'compact' || normalized === 'full' ? normalized : 'auto';
+  }
+
+  function applySurfaceComponents(value) {
+    const next = normalizeSurfaceComponents(value);
+    surfaceComponents = next;
+    syncSurfaceComponentControls();
+    if (isEmbeddedSurfaceActive() && embedReady) {
+      postEmbedMessage({
+        type: 'NEKO_EMBED_SET_COMPONENTS',
+        requestId: `components-${Date.now()}`,
+        components: surfaceComponents.slice()
+      });
+    }
+    return surfaceComponents.slice();
+  }
+
+  function applyChatSurfaceMode(value) {
+    chatSurfaceMode = normalizeChatSurfaceMode(value);
+    if (isEmbeddedSurfaceActive() && embedReady) {
+      postEmbedMessage({
+        type: 'NEKO_EMBED_SET_CHAT_MODE',
+        requestId: `chat-mode-${Date.now()}`,
+        chatMode: chatSurfaceMode
+      });
+    }
+    return chatSurfaceMode;
+  }
+
   function canInjectHere() {
     const url = location.href;
     if (!/^https?:\/\//i.test(url)) {
@@ -1149,11 +1672,16 @@
     return chrome.runtime.sendMessage({ type: 'NEKO_GET_STATE' }).then((stored) => ({
       ...DEFAULT_STATE,
       ...stored,
+      surfaceComponents: normalizeSurfaceComponents(stored?.surfaceComponents),
+      chatSurfaceMode: normalizeChatSurfaceMode(stored?.chatSurfaceMode),
       panel: {
         ...DEFAULT_STATE.panel,
         ...(stored?.panel || {})
       }
-    })).catch(() => DEFAULT_STATE);
+    })).catch(() => ({
+      ...DEFAULT_STATE,
+      surfaceComponents: DEFAULT_STATE.surfaceComponents.slice()
+    }));
   }
 
   function saveState(payload) {

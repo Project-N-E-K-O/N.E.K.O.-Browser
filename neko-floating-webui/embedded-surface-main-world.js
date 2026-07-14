@@ -1,0 +1,819 @@
+(function () {
+    'use strict';
+
+    const params = new URLSearchParams(window.location.search);
+    const surface = String(params.get('surface') || '').trim().toLowerCase();
+    if (window.top === window || surface !== 'embed' || window.__nekoFloatingEmbeddedSurfaceLoaded) {
+        return;
+    }
+
+    window.__nekoFloatingEmbeddedSurfaceLoaded = true;
+    document.documentElement.classList.add('neko-embedded-surface');
+    document.documentElement.dataset.nekoEmbeddedSurface = 'true';
+    const initialComponents = params.has('components') ? params.get('components') : 'all';
+    const initialChatMode = params.get('chat_mode');
+
+    const PROTOCOL_VERSION = 1;
+    const COMPONENT_ORDER = Object.freeze(['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']);
+    const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
+    const UI_REGION_SELECTORS = Object.freeze({
+        chat: [
+            '#react-chat-window-shell',
+            '#chat-avatar-preview-popup',
+            '[data-compact-hit-region="true"]',
+            '[data-compact-geometry-owner="surface"]',
+            '#react-chat-window-root .compact-chat-surface-frame',
+            '#react-chat-window-root .compact-chat-resize-handle',
+            '#react-chat-window-root .compact-history-visibility-handle',
+            '#react-chat-window-root .compact-export-history-anchor',
+            '#react-chat-window-root .compact-meme-overlay',
+            '#react-chat-window-root .compact-meme-overlay-close',
+            '#react-chat-window-root .compact-music-player-mount',
+            '#react-chat-window-root .composer-icon-popover',
+            '#react-chat-window-root .composer-overflow-popover',
+            '#react-chat-window-root .compact-input-tool-fan',
+            '#react-chat-window-root .avatar-tool-quickbar',
+            'body > .avatar-tool-manager-dialog',
+            'body > .compact-chat-choice-anchor[data-choice-layer-open="true"] .composer-galgame-option',
+            '#crop-overlay',
+            'body > .jukebox-wrapper > .jukebox-container',
+            'body > .jukebox-sam-panel'
+        ],
+        subtitle: [
+            '#subtitle-display',
+            '#subtitle-panel-controls',
+            '#subtitle-settings-btn',
+            '.subtitle-panel-control-btn',
+            '#subtitle-settings-panel',
+            '.subtitle-resize-edge'
+        ],
+        controls: [
+            '[id$="-floating-buttons"]',
+            '[id$="-lock-icon"]',
+            '[id$="-return-button-container"]',
+            '[id^="live2d-popup-"]',
+            '[id^="vrm-popup-"]',
+            '[id^="mmd-popup-"]',
+            '[id^="pngtuber-popup-"]',
+            '.live2d-popup',
+            '.vrm-popup',
+            '.mmd-popup',
+            '.pngtuber-popup',
+            '[data-neko-sidepanel]'
+        ],
+        'agent-hud': [
+            '#agent-task-hud',
+            '#agent-task-hud-header'
+        ],
+        status: [
+            '#status-toast.show',
+            '.neko-toast',
+            '[data-neko-toast]'
+        ],
+        avatar: [
+            '#avatar-reaction-bubble.is-visible',
+            '[data-neko-embed-interactive="avatar"]'
+        ]
+    });
+
+    let enabledComponents = new Set(normalizeComponents(initialComponents));
+    let fixedChatMode = normalizeChatMode(initialChatMode);
+    let pageChatMode = null;
+    let connectedParentOrigin = null;
+    let regionFrame = 0;
+    let lastRegionSignature = '';
+    let managerSyncTicks = 0;
+    let pointerRelayFrame = 0;
+    let pendingPointerRelay = null;
+    const managersPausedBySurface = new WeakSet();
+
+    function normalizeComponents(value) {
+        let values = value;
+        if (typeof values === 'string') {
+            const normalizedText = values.trim().toLowerCase();
+            if (normalizedText === 'all') return COMPONENT_ORDER.slice();
+            if (normalizedText === 'none') return [];
+            values = normalizedText.replace(/;/g, ',').split(',');
+        }
+        if (!Array.isArray(values)) return [];
+
+        const selected = new Set();
+        values.forEach((valueItem) => {
+            const name = String(valueItem || '').trim().toLowerCase();
+            if (COMPONENT_ORDER.includes(name)) selected.add(name);
+        });
+        return COMPONENT_ORDER.filter((name) => selected.has(name));
+    }
+
+    function normalizeChatMode(value) {
+        const normalized = String(value || '').trim().toLowerCase();
+        return CHAT_SURFACE_MODES.includes(normalized) ? normalized : 'auto';
+    }
+
+    function getCurrentChatMode() {
+        const host = window.reactChatWindowHost;
+        if (host && typeof host.getChatSurfaceMode === 'function') {
+            try {
+                const mode = String(host.getChatSurfaceMode() || '').trim().toLowerCase();
+                if (mode === 'compact' || mode === 'full' || mode === 'minimized') return mode;
+            } catch (_) {}
+        }
+        const shell = document.getElementById('react-chat-window-shell');
+        const shellMode = shell && String(shell.dataset.chatSurfaceMode || '').trim().toLowerCase();
+        if (shellMode === 'compact' || shellMode === 'full' || shellMode === 'minimized') return shellMode;
+        const initialMode = document.body
+            && String(document.body.dataset.initialChatSurfaceMode || '').trim().toLowerCase();
+        return initialMode === 'full' ? 'full' : (initialMode === 'compact' ? 'compact' : null);
+    }
+
+    function rememberPageChatMode(mode) {
+        if (mode === 'compact' || mode === 'full') pageChatMode = mode;
+        else if (mode === 'minimized' && !pageChatMode) pageChatMode = 'compact';
+    }
+
+    function callHostChatMode(mode) {
+        const host = window.reactChatWindowHost;
+        if (!host || typeof host.setChatSurfaceMode !== 'function') return false;
+        try {
+            host.setChatSurfaceMode(mode);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function syncFixedChatMode() {
+        const current = getCurrentChatMode();
+        if (!pageChatMode) rememberPageChatMode(current);
+        if (fixedChatMode === 'auto' || current === fixedChatMode) return current;
+        callHostChatMode(fixedChatMode);
+        return getCurrentChatMode();
+    }
+
+    function setFixedChatMode(nextMode, source) {
+        const previousMode = fixedChatMode;
+        const current = getCurrentChatMode();
+        if (previousMode === 'auto') rememberPageChatMode(current);
+        fixedChatMode = normalizeChatMode(nextMode);
+        if (fixedChatMode === 'auto') {
+            if (pageChatMode && current !== pageChatMode) callHostChatMode(pageChatMode);
+        } else {
+            syncFixedChatMode();
+        }
+        scheduleRegionReport();
+        const detail = {
+            chatMode: fixedChatMode,
+            currentMode: getCurrentChatMode(),
+            source: source || 'runtime'
+        };
+        postToParent('NEKO_EMBED_CHAT_MODE_CHANGED', detail);
+        return detail;
+    }
+
+    function componentList() {
+        return COMPONENT_ORDER.filter((name) => enabledComponents.has(name));
+    }
+
+    function componentState() {
+        return COMPONENT_ORDER.reduce((state, name) => {
+            state[name] = enabledComponents.has(name);
+            return state;
+        }, {});
+    }
+
+    function applyComponentState(source) {
+        const root = document.documentElement;
+        COMPONENT_ORDER.forEach((name) => {
+            root.dataset[componentDatasetKey(name)] = enabledComponents.has(name) ? 'on' : 'off';
+        });
+
+        if (document.body) {
+            document.body.dataset.nekoEmbeddedSurface = 'true';
+            document.body.dataset.nekoSurfaceComponents = componentList().join(',');
+        }
+
+        syncAvatarRendering();
+        scheduleRegionReport();
+
+        const detail = {
+            components: componentList(),
+            state: componentState(),
+            source: source || 'runtime'
+        };
+        window.dispatchEvent(new CustomEvent('neko-embedded-components-change', { detail }));
+        postToParent('NEKO_EMBED_COMPONENTS_CHANGED', detail);
+        return detail;
+    }
+
+    function setComponents(nextComponents, source) {
+        const normalized = normalizeComponents(nextComponents);
+        const previous = componentList();
+        if (previous.length === normalized.length && previous.every((name, index) => name === normalized[index])) {
+            scheduleRegionReport();
+            return {
+                components: previous,
+                state: componentState(),
+                source: source || 'runtime'
+            };
+        }
+        enabledComponents = new Set(normalized);
+        return applyComponentState(source);
+    }
+
+    function setComponentEnabled(name, enabled, source) {
+        const normalizedNames = normalizeComponents([name]);
+        if (!normalizedNames.length) return null;
+        const normalizedName = normalizedNames[0];
+        const next = new Set(enabledComponents);
+        if (enabled) next.add(normalizedName);
+        else next.delete(normalizedName);
+        return setComponents(Array.from(next), source);
+    }
+
+    function toggleComponent(name, source) {
+        const normalizedNames = normalizeComponents([name]);
+        if (!normalizedNames.length) return null;
+        const normalizedName = normalizedNames[0];
+        return setComponentEnabled(normalizedName, !enabledComponents.has(normalizedName), source);
+    }
+
+    function syncAvatarRendering() {
+        const avatarEnabled = enabledComponents.has('avatar');
+        [
+            window.live2dManager,
+            window.vrmManager,
+            window.mmdManager,
+            window.pngtuberManager
+        ].forEach((manager) => {
+            if (!manager) return;
+            if (!avatarEnabled && typeof manager.pauseRendering === 'function') {
+                try {
+                    manager.pauseRendering();
+                    managersPausedBySurface.add(manager);
+                } catch (_) {}
+                return;
+            }
+            if (avatarEnabled && managersPausedBySurface.has(manager) && typeof manager.resumeRendering === 'function') {
+                try {
+                    manager.resumeRendering();
+                    managersPausedBySurface.delete(manager);
+                } catch (_) {}
+            }
+        });
+    }
+
+    function capitalize(value) {
+        return value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    function componentDatasetKey(name) {
+        return `nekoSurface${name.split('-').map(capitalize).join('')}`;
+    }
+
+    function isRendered(element) {
+        if (!element || !element.isConnected || element.hidden) return false;
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    }
+
+    function acceptsPointerlessRegion(component, element) {
+        return component === 'subtitle'
+            && element.id === 'subtitle-display'
+            && isDanmakuSubtitleDisplay(element);
+    }
+
+    function isDanmakuSubtitleDisplay(element) {
+        if (element.dataset.subtitleDanmakuActive === 'true') return true;
+        const toggle = document.getElementById('subtitle-danmaku-mode-btn');
+        if (toggle && toggle.checked === true) return true;
+        try {
+            const settings = window.nekoSubtitleShared
+                && typeof window.nekoSubtitleShared.getSettings === 'function'
+                ? window.nekoSubtitleShared.getSettings()
+                : null;
+            return settings && settings.subtitleDanmakuMode === true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function rectToPayload(rect) {
+        const left = Math.max(0, rect.left);
+        const top = Math.max(0, rect.top);
+        const right = Math.min(window.innerWidth, rect.right);
+        const bottom = Math.min(window.innerHeight, rect.bottom);
+        if (right <= left || bottom <= top) return null;
+        return {
+            left: round(left),
+            top: round(top),
+            right: round(right),
+            bottom: round(bottom),
+            width: round(right - left),
+            height: round(bottom - top)
+        };
+    }
+
+    function round(value) {
+        return Math.round(value * 100) / 100;
+    }
+
+    function collectElementRegions() {
+        const regions = [];
+        const seen = new Set();
+
+        Object.entries(UI_REGION_SELECTORS).forEach(([component, selectors]) => {
+            if (!enabledComponents.has(component)) return;
+            selectors.forEach((selector) => {
+                document.querySelectorAll(selector).forEach((element) => {
+                    if (seen.has(element) || !isRendered(element)) return;
+                    const style = window.getComputedStyle(element);
+                    if (style.pointerEvents === 'none' && !acceptsPointerlessRegion(component, element)) return;
+                    const rect = rectToPayload(element.getBoundingClientRect());
+                    if (!rect) return;
+                    seen.add(element);
+                    regions.push({
+                        component,
+                        kind: 'ui',
+                        id: element.id || element.getAttribute('data-neko-embed-region') || selector,
+                        rect
+                    });
+                });
+            });
+        });
+
+        return regions;
+    }
+
+    function collectAvatarBoundsRegion() {
+        if (!enabledComponents.has('avatar')) return null;
+
+        const live2dRegion = getLive2DBoundsRegion();
+        if (live2dRegion) return live2dRegion;
+
+        const vrmRegion = getThreeBoundsRegion(window.vrmManager, 'vrm-model');
+        if (vrmRegion) return vrmRegion;
+
+        const mmdRegion = getThreeBoundsRegion(window.mmdManager, 'mmd-model');
+        if (mmdRegion) return mmdRegion;
+
+        const pngtuberRegion = getPngtuberBoundsRegion();
+        if (pngtuberRegion) return pngtuberRegion;
+
+        return null;
+    }
+
+    function getLive2DBoundsRegion() {
+        const manager = window.live2dManager;
+        const model = manager && manager.currentModel;
+        const canvas = document.getElementById('live2d-canvas');
+        if (!model || !canvas || !isRendered(canvas) || typeof model.getBounds !== 'function') return null;
+
+        try {
+            const bounds = model.getBounds();
+            const canvasRect = canvas.getBoundingClientRect();
+            const rendererScreen = manager.pixi_app && manager.pixi_app.renderer
+                ? manager.pixi_app.renderer.screen
+                : null;
+            const rendererWidth = rendererScreen && Number(rendererScreen.width) > 0
+                ? Number(rendererScreen.width)
+                : canvasRect.width;
+            const rendererHeight = rendererScreen && Number(rendererScreen.height) > 0
+                ? Number(rendererScreen.height)
+                : canvasRect.height;
+            const scaleX = canvasRect.width / rendererWidth;
+            const scaleY = canvasRect.height / rendererHeight;
+            const left = canvasRect.left + Number(bounds.left ?? bounds.x) * scaleX;
+            const top = canvasRect.top + Number(bounds.top ?? bounds.y) * scaleY;
+            const width = Number(bounds.width ?? (bounds.right - bounds.left)) * scaleX;
+            const height = Number(bounds.height ?? (bounds.bottom - bounds.top)) * scaleY;
+            if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+            const rect = rectToPayload({ left, top, right: left + width, bottom: top + height });
+            return rect ? { component: 'avatar', kind: 'model-bounds', id: 'live2d-model', rect } : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function getThreeBoundsRegion(manager, id) {
+        if (!manager || typeof manager.getModelScreenBounds !== 'function') return null;
+        const canvas = manager.renderer && manager.renderer.domElement;
+        if (!canvas || !isRendered(canvas)) return null;
+        try {
+            const bounds = manager.getModelScreenBounds();
+            if (!bounds) return null;
+            const rect = rectToPayload(bounds);
+            return rect ? { component: 'avatar', kind: 'model-bounds', id, rect } : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function getPngtuberBoundsRegion() {
+        const manager = window.pngtuberManager;
+        const element = manager && (manager.image || manager.imageElement || manager.canvasElement);
+        if (!element || !isRendered(element)) return null;
+        const rect = rectToPayload(element.getBoundingClientRect());
+        return rect ? { component: 'avatar', kind: 'model-bounds', id: 'pngtuber-model', rect } : null;
+    }
+
+    function collectRegions() {
+        const regions = collectElementRegions();
+        const avatarRegion = collectAvatarBoundsRegion();
+        if (avatarRegion) regions.push(avatarRegion);
+        return regions;
+    }
+
+    function scheduleRegionReport() {
+        if (regionFrame) return;
+        regionFrame = window.requestAnimationFrame(() => {
+            regionFrame = 0;
+            reportRegions();
+        });
+    }
+
+    function reportRegions(force) {
+        const regions = collectRegions();
+        const signature = JSON.stringify(regions);
+        if (!force && signature === lastRegionSignature) return regions;
+        lastRegionSignature = signature;
+        postToParent('NEKO_EMBED_INTERACTIVE_REGIONS', {
+            components: componentList(),
+            regions,
+            viewport: {
+                width: window.innerWidth,
+                height: window.innerHeight,
+                devicePixelRatio: window.devicePixelRatio || 1
+            }
+        });
+        return regions;
+    }
+
+    function pointInRect(x, y, rect) {
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }
+
+    function hitTestUi(x, y) {
+        const regions = collectElementRegions();
+        for (let index = regions.length - 1; index >= 0; index -= 1) {
+            const region = regions[index];
+            if (pointInRect(x, y, region.rect)) return region;
+        }
+        return null;
+    }
+
+    function hitTestLive2D(x, y) {
+        const manager = window.live2dManager;
+        const model = manager && manager.currentModel;
+        const canvas = document.getElementById('live2d-canvas');
+        if (!model || !canvas || !isRendered(canvas) || typeof model.getBounds !== 'function') return false;
+
+        try {
+            const canvasRect = canvas.getBoundingClientRect();
+            const rendererScreen = manager.pixi_app && manager.pixi_app.renderer
+                ? manager.pixi_app.renderer.screen
+                : null;
+            const rendererWidth = rendererScreen && Number(rendererScreen.width) > 0
+                ? Number(rendererScreen.width)
+                : canvasRect.width;
+            const rendererHeight = rendererScreen && Number(rendererScreen.height) > 0
+                ? Number(rendererScreen.height)
+                : canvasRect.height;
+            const rendererX = (x - canvasRect.left) * (rendererWidth / canvasRect.width);
+            const rendererY = (y - canvasRect.top) * (rendererHeight / canvasRect.height);
+            const bounds = model.getBounds();
+            const left = Number(bounds.left ?? bounds.x);
+            const top = Number(bounds.top ?? bounds.y);
+            const width = Number(bounds.width ?? (bounds.right - bounds.left));
+            const height = Number(bounds.height ?? (bounds.bottom - bounds.top));
+            if (![rendererX, rendererY, left, top, width, height].every(Number.isFinite)) return false;
+            if (width <= 0 || height <= 0) return false;
+            if (rendererX < left || rendererX > left + width || rendererY < top || rendererY > top + height) return false;
+
+            if (typeof model.hitTest === 'function') {
+                try {
+                    const areas = model.hitTest(rendererX, rendererY);
+                    if (areas && areas.length > 0) return true;
+                } catch (_) {}
+            }
+
+            const centerX = left + width / 2;
+            const centerY = top + height / 2;
+            const radiusX = width * 0.3;
+            const radiusY = height * 0.45;
+            if (radiusX <= 0 || radiusY <= 0) return false;
+            const normalizedX = (rendererX - centerX) / radiusX;
+            const normalizedY = (rendererY - centerY) / radiusY;
+            return normalizedX * normalizedX + normalizedY * normalizedY <= 1;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function hitTestThreeManager(manager, x, y) {
+        const interaction = manager && manager.interaction;
+        if (!interaction || typeof interaction._hitTestModel !== 'function') return false;
+        const canvas = manager.renderer && manager.renderer.domElement;
+        if (!canvas || !isRendered(canvas)) return false;
+        try {
+            return interaction._hitTestModel(x, y) === true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function hitTestPngtuber(x, y) {
+        const manager = window.pngtuberManager;
+        const element = manager && (manager.image || manager.imageElement || manager.canvasElement);
+        if (!element || !isRendered(element)) return false;
+        const rect = element.getBoundingClientRect();
+        return pointInRect(x, y, rect);
+    }
+
+    function hitTest(xValue, yValue) {
+        const x = Number(xValue);
+        const y = Number(yValue);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return { interactive: false, component: null, kind: null, id: null };
+        }
+
+        const uiRegion = hitTestUi(x, y);
+        if (uiRegion) {
+            return {
+                interactive: true,
+                component: uiRegion.component,
+                kind: uiRegion.kind,
+                id: uiRegion.id
+            };
+        }
+
+        if (!enabledComponents.has('avatar')) {
+            return { interactive: false, component: null, kind: null, id: null };
+        }
+
+        if (hitTestLive2D(x, y)) {
+            return { interactive: true, component: 'avatar', kind: 'model', id: 'live2d-model' };
+        }
+        if (hitTestThreeManager(window.vrmManager, x, y)) {
+            return { interactive: true, component: 'avatar', kind: 'model', id: 'vrm-model' };
+        }
+        if (hitTestThreeManager(window.mmdManager, x, y)) {
+            return { interactive: true, component: 'avatar', kind: 'model', id: 'mmd-model' };
+        }
+        if (hitTestPngtuber(x, y)) {
+            return { interactive: true, component: 'avatar', kind: 'model', id: 'pngtuber-model' };
+        }
+        return { interactive: false, component: null, kind: null, id: null };
+    }
+
+    function snapshotPointerEvent(event, phase) {
+        return {
+            phase,
+            pointerId: Number(event.pointerId) || 0,
+            pointerType: String(event.pointerType || 'mouse'),
+            x: Number(event.clientX),
+            y: Number(event.clientY),
+            buttons: Number(event.buttons) || 0,
+            button: Number(event.button),
+            isPrimary: event.isPrimary !== false
+        };
+    }
+
+    function publishPointerRelay(pointer) {
+        if (!pointer || !Number.isFinite(pointer.x) || !Number.isFinite(pointer.y)) return;
+        postToParent('NEKO_EMBED_POINTER', Object.assign(pointer, hitTestPointerSurface(pointer.x, pointer.y)));
+    }
+
+    function hitTestPointerSurface(x, y) {
+        const preciseHit = hitTest(x, y);
+        if (preciseHit.interactive) return preciseHit;
+
+        // PIXI starts Live2D dragging from the model display object's bounds,
+        // which are intentionally broader than configured Cubism hit areas.
+        // Match that contract so limbs remain draggable while the rest of the
+        // full-screen iframe can still pass through to the host page.
+        const live2dRegion = getLive2DBoundsRegion();
+        if (live2dRegion && pointInRect(x, y, live2dRegion.rect)) {
+            return {
+                interactive: true,
+                component: 'avatar',
+                kind: 'model',
+                id: 'live2d-model'
+            };
+        }
+        return preciseHit;
+    }
+
+    function relayPointerMove(event) {
+        pendingPointerRelay = snapshotPointerEvent(event, 'move');
+        if (pointerRelayFrame) return;
+        pointerRelayFrame = window.requestAnimationFrame(() => {
+            pointerRelayFrame = 0;
+            const pointer = pendingPointerRelay;
+            pendingPointerRelay = null;
+            publishPointerRelay(pointer);
+        });
+    }
+
+    function relayPointerImmediately(event, phase) {
+        if (pointerRelayFrame) {
+            window.cancelAnimationFrame(pointerRelayFrame);
+            pointerRelayFrame = 0;
+            pendingPointerRelay = null;
+        }
+        publishPointerRelay(snapshotPointerEvent(event, phase));
+    }
+
+    function postToParent(type, payload) {
+        if (window.parent === window) return;
+        const targetOrigin = connectedParentOrigin || '*';
+        try {
+            window.parent.postMessage(Object.assign({
+                type,
+                protocolVersion: PROTOCOL_VERSION,
+                _sender: 'neko-embedded-surface'
+            }, payload || {}), targetOrigin);
+        } catch (_) {}
+    }
+
+    function postReady(requestId) {
+        postToParent('NEKO_EMBED_READY', {
+            requestId: requestId || null,
+            components: componentList(),
+            state: componentState(),
+            chatMode: fixedChatMode,
+            currentChatMode: getCurrentChatMode(),
+            capabilities: {
+                dynamicComponents: true,
+                fixedChatMode: true,
+                interactiveRegions: true,
+                modelHitTest: true,
+                pointerRelay: true
+            }
+        });
+        reportRegions(true);
+    }
+
+    function onParentMessage(event) {
+        if (event.source !== window.parent || !event.data || typeof event.data.type !== 'string') return;
+        const data = event.data;
+        if (!data.type.startsWith('NEKO_EMBED_')) return;
+
+        if (connectedParentOrigin && event.origin !== connectedParentOrigin) return;
+        if (!connectedParentOrigin) connectedParentOrigin = event.origin;
+
+        if (data.type === 'NEKO_EMBED_CONNECT') {
+            if (data.components !== undefined) setComponents(data.components, 'parent-connect');
+            if (data.chatMode !== undefined) setFixedChatMode(data.chatMode, 'parent-connect');
+            postReady(data.requestId);
+            return;
+        }
+
+        if (data.type === 'NEKO_EMBED_SET_COMPONENTS') {
+            const detail = setComponents(data.components, 'parent-message');
+            postToParent('NEKO_EMBED_STATE', Object.assign({ requestId: data.requestId || null }, detail));
+            return;
+        }
+
+        if (data.type === 'NEKO_EMBED_SET_COMPONENT') {
+            const detail = setComponentEnabled(data.component, data.enabled !== false, 'parent-message');
+            postToParent('NEKO_EMBED_STATE', Object.assign({
+                requestId: data.requestId || null,
+                ok: Boolean(detail)
+            }, detail || { components: componentList(), state: componentState() }));
+            return;
+        }
+
+        if (data.type === 'NEKO_EMBED_SET_CHAT_MODE') {
+            const detail = setFixedChatMode(data.chatMode, 'parent-message');
+            postToParent('NEKO_EMBED_CHAT_MODE_STATE', Object.assign({
+                requestId: data.requestId || null
+            }, detail));
+            return;
+        }
+
+        if (data.type === 'NEKO_EMBED_GET_STATE') {
+            postToParent('NEKO_EMBED_STATE', {
+                requestId: data.requestId || null,
+                components: componentList(),
+                state: componentState(),
+                chatMode: fixedChatMode,
+                currentChatMode: getCurrentChatMode()
+            });
+            return;
+        }
+
+        if (data.type === 'NEKO_EMBED_GET_REGIONS') {
+            const regions = collectRegions();
+            lastRegionSignature = JSON.stringify(regions);
+            postToParent('NEKO_EMBED_INTERACTIVE_REGIONS', {
+                requestId: data.requestId || null,
+                components: componentList(),
+                regions,
+                viewport: {
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    devicePixelRatio: window.devicePixelRatio || 1
+                }
+            });
+            return;
+        }
+
+        if (data.type === 'NEKO_EMBED_HIT_TEST') {
+            postToParent('NEKO_EMBED_HIT_TEST_RESULT', Object.assign({
+                requestId: data.requestId || null,
+                x: Number(data.x),
+                y: Number(data.y)
+            }, hitTest(data.x, data.y)));
+        }
+    }
+
+    const api = {
+        getComponents: () => componentList(),
+        getState: () => componentState(),
+        setComponents: (components) => setComponents(components, 'public-api'),
+        enable: (component) => setComponentEnabled(component, true, 'public-api'),
+        disable: (component) => setComponentEnabled(component, false, 'public-api'),
+        toggle: (component) => toggleComponent(component, 'public-api'),
+        getChatMode: () => fixedChatMode,
+        setChatMode: (mode) => setFixedChatMode(mode, 'public-api'),
+        getInteractiveRegions: () => collectRegions(),
+        hitTest: (x, y) => hitTest(x, y),
+        protocolVersion: PROTOCOL_VERSION
+    };
+    window.NekoEmbeddedSurface = Object.freeze(api);
+
+    window.addEventListener('message', onParentMessage);
+    window.addEventListener('resize', scheduleRegionReport);
+    window.addEventListener('scroll', scheduleRegionReport, true);
+    window.addEventListener('pointermove', (event) => {
+        scheduleRegionReport();
+        relayPointerMove(event);
+    }, { passive: true, capture: true });
+    window.addEventListener('pointerdown', (event) => {
+        relayPointerImmediately(event, 'down');
+    }, { passive: true, capture: true });
+    window.addEventListener('pointerup', (event) => {
+        relayPointerImmediately(event, 'up');
+    }, { passive: true, capture: true });
+    window.addEventListener('pointercancel', (event) => {
+        relayPointerImmediately(event, 'cancel');
+    }, { passive: true, capture: true });
+    document.addEventListener('pointerleave', (event) => {
+        relayPointerImmediately(event, 'leave');
+    }, { passive: true, capture: true });
+    window.addEventListener('wheel', scheduleRegionReport, { passive: true });
+    window.addEventListener('chat-surface-mode-change', (event) => {
+        const mode = event && event.detail ? String(event.detail.mode || '').trim().toLowerCase() : '';
+        if (fixedChatMode === 'auto') {
+            rememberPageChatMode(mode);
+        } else if (mode !== fixedChatMode) {
+            window.requestAnimationFrame(syncFixedChatMode);
+        }
+        scheduleRegionReport();
+    });
+    [
+        'live2d-model-loaded',
+        'vrm-model-loaded',
+        'mmd-model-loaded',
+        'pngtuber-model-loaded',
+        'live2d-floating-buttons-ready',
+        'neko-avatar-reaction-bubble-setting-changed'
+    ].forEach((eventName) => {
+        window.addEventListener(eventName, () => {
+            syncAvatarRendering();
+            scheduleRegionReport();
+        });
+    });
+
+    const observer = new MutationObserver(scheduleRegionReport);
+    observer.observe(document.body || document.documentElement, {
+        attributes: true,
+        attributeFilter: [
+            'class',
+            'style',
+            'hidden',
+            'data-chat-surface-mode',
+            'data-choice-layer-open',
+            'data-compact-choice-placement',
+            'data-subtitle-danmaku-active',
+            'data-subtitle-panel-state',
+            'data-subtitle-interaction-passthrough'
+        ],
+        childList: true,
+        subtree: true
+    });
+
+    const managerSyncInterval = window.setInterval(() => {
+        syncAvatarRendering();
+        syncFixedChatMode();
+        scheduleRegionReport();
+        managerSyncTicks += 1;
+        if (managerSyncTicks >= 80) window.clearInterval(managerSyncInterval);
+    }, 250);
+
+    applyComponentState('initial');
+    syncFixedChatMode();
+    postReady(null);
+})();

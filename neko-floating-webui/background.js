@@ -1,3 +1,13 @@
+const SURFACE_COMPONENT_ORDER = Object.freeze([
+  'avatar',
+  'chat',
+  'subtitle',
+  'controls',
+  'agent-hud',
+  'status'
+]);
+const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
+
 const DEFAULT_STATE = {
   enabled: false,
   minimized: true,
@@ -5,6 +15,8 @@ const DEFAULT_STATE = {
   activeTabId: null,
   activeSidePanelWindowId: null,
   displayMode: 'floating',
+  surfaceComponents: SURFACE_COMPONENT_ORDER.slice(),
+  chatSurfaceMode: 'auto',
   panel: {
     width: 420,
     height: 680,
@@ -42,6 +54,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     activeTabId: null,
     activeSidePanelWindowId: null,
     displayMode: normalizeDisplayMode(current.displayMode),
+    surfaceComponents: normalizeSurfaceComponents(current.surfaceComponents),
+    chatSurfaceMode: normalizeChatSurfaceMode(current.chatSurfaceMode),
     panel: {
       ...DEFAULT_STATE.panel,
       ...(current.panel || {})
@@ -173,6 +187,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'NEKO_SET_STATE') {
     const payload = { ...(message.payload || {}) };
+    if (Object.prototype.hasOwnProperty.call(payload, 'surfaceComponents')) {
+      payload.surfaceComponents = normalizeSurfaceComponents(payload.surfaceComponents);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'chatSurfaceMode')) {
+      payload.chatSurfaceMode = normalizeChatSurfaceMode(payload.chatSurfaceMode);
+    }
     if (typeof payload.minimized === 'boolean') {
       payload.wakeStateInitialized = true;
       if (typeof payload.enabled !== 'boolean') {
@@ -183,6 +203,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.set(payload).then(() => {
       sendResponse({ ok: true });
     });
+    return true;
+  }
+
+  if (message.type === 'NEKO_SET_SURFACE_COMPONENTS') {
+    setSurfaceComponents(message.surfaceComponents)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (message.type === 'NEKO_SET_CHAT_SURFACE_MODE') {
+    setChatSurfaceMode(message.chatSurfaceMode)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -769,12 +803,44 @@ async function getStoredState() {
     ...DEFAULT_STATE,
     ...stored,
     displayMode: normalizeDisplayMode(stored.displayMode),
+    surfaceComponents: normalizeSurfaceComponents(stored.surfaceComponents),
+    chatSurfaceMode: normalizeChatSurfaceMode(stored.chatSurfaceMode),
     activeSidePanelWindowId: normalizeWindowId(stored.activeSidePanelWindowId),
     panel: {
       ...DEFAULT_STATE.panel,
       ...(stored.panel || {})
     }
   };
+}
+
+async function setSurfaceComponents(value) {
+  const surfaceComponents = normalizeSurfaceComponents(value);
+  const state = await getStoredState();
+  await chrome.storage.local.set({ surfaceComponents });
+
+  const activeTabId = await getLiveActiveTabId(state);
+  if (activeTabId !== null) {
+    await sendTabMessage(activeTabId, {
+      type: 'NEKO_APPLY_SURFACE_COMPONENTS',
+      surfaceComponents
+    });
+  }
+  return { ok: true, surfaceComponents };
+}
+
+async function setChatSurfaceMode(value) {
+  const chatSurfaceMode = normalizeChatSurfaceMode(value);
+  const state = await getStoredState();
+  await chrome.storage.local.set({ chatSurfaceMode });
+
+  const activeTabId = await getLiveActiveTabId(state);
+  if (activeTabId !== null) {
+    await sendTabMessage(activeTabId, {
+      type: 'NEKO_APPLY_CHAT_SURFACE_MODE',
+      chatSurfaceMode
+    });
+  }
+  return { ok: true, chatSurfaceMode };
 }
 
 async function getLiveActiveTabId(state) {
@@ -805,6 +871,19 @@ function normalizeDisplayMode(mode) {
     return mode;
   }
   return 'floating';
+}
+
+function normalizeSurfaceComponents(value) {
+  if (!Array.isArray(value)) {
+    return SURFACE_COMPONENT_ORDER.slice();
+  }
+  const selected = new Set(value.map((item) => String(item || '').trim().toLowerCase()));
+  return SURFACE_COMPONENT_ORDER.filter((component) => selected.has(component));
+}
+
+function normalizeChatSurfaceMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return CHAT_SURFACE_MODES.includes(normalized) ? normalized : 'auto';
 }
 
 function normalizeWindowId(windowId) {
