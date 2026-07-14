@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 232px;
+      margin: 0;
+      font: 13px "Segoe UI", Arial, sans-serif;
+      color: #0f172a;
+    }
+    .section { padding: 12px 12px 14px; }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .modes { display: flex; gap: 6px; }
+    .modes button {
+      flex: 1;
+      padding: 9px 0;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 6px;
+      background: #ffffff;
+      cursor: pointer;
+      font: inherit;
+      color: inherit;
+    }
+    .modes button:hover {
+      background: #eef2ff;
+      border-color: rgba(79, 70, 229, 0.32);
+    }
+    .modes button.active {
+      background: #eef2ff;
+      border-color: rgba(79, 70, 229, 0.45);
+      color: #4338ca;
+      font-weight: 600;
+    }
+    button:disabled {
+      cursor: wait;
+      opacity: .55;
+    }
+    .toggle {
+      display: block;
+      width: 100%;
+      margin-top: 12px;
+      padding: 10px 0;
+      border: 0;
+      border-radius: 6px;
+      background: #4f46e5;
+      color: #ffffff;
+      font: 600 13px "Segoe UI", Arial, sans-serif;
+      cursor: pointer;
+    }
+    .toggle:hover { background: #4338ca; }
+    .hint {
+      margin: 10px 0 0;
+      font-size: 11px;
+      color: #64748b;
+      line-height: 1.45;
+    }
+    .error {
+      margin: 8px 0 0;
+      color: #b91c1c;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .error[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="section">
+    <h3>显示模式</h3>
+    <div class="modes">
+      <button type="button" data-mode="floating">浮窗</button>
+      <button type="button" data-mode="fullscreen">全屏</button>
+      <button type="button" data-mode="sidebar">侧栏</button>
+    </div>
+    <button type="button" class="toggle" id="toggle">显示 / 隐藏面板</button>
+    <p class="hint" id="hint">全屏显示时可点击和拖动 Live2D；需要操作原网页时，点击右上角胶囊隐藏叠加层。</p>
+    <p class="error" id="error" role="alert" hidden></p>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

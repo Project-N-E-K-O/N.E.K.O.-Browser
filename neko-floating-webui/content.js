@@ -11,6 +11,7 @@
   const DEFAULT_STATE = {
     enabled: false,
     minimized: true,
+    displayMode: 'floating',
     panel: {
       width: 420,
       height: 680,
@@ -31,6 +32,7 @@
 
   let currentPanel = { ...DEFAULT_STATE.panel };
   let webuiUrl = DEFAULT_STATE.webuiUrl;
+  let displayMode = DEFAULT_STATE.displayMode;
   let host = null;
   let shadow = null;
   let panel = null;
@@ -74,8 +76,10 @@
     }
 
     if (message.type === 'NEKO_FORCE_CLOSE') {
+      const unloaded = Boolean(frame?.hasAttribute('src'));
+      const removed = Boolean(panel || frame || host);
       closePanel();
-      sendResponse({ visible: false });
+      sendResponse({ visible: false, unloaded, removed });
       return false;
     }
 
@@ -113,6 +117,12 @@
       return false;
     }
 
+    if (message.type === 'NEKO_APPLY_DISPLAY_MODE') {
+      applyDisplayMode(normalizeDisplayMode(message.mode));
+      sendResponse({ ok: true });
+      return false;
+    }
+
     return false;
   });
 
@@ -138,6 +148,9 @@
     if (!panel) {
       return;
     }
+    if (displayMode === 'fullscreen') {
+      return;
+    }
     const rect = panel.getBoundingClientRect();
     currentPanel = normalizePanel({
       ...currentPanel,
@@ -158,6 +171,11 @@
 
   async function openPanel(forceAwake = false) {
     const state = await getState();
+    if (normalizeDisplayMode(state.displayMode) === 'sidebar') {
+      displayMode = 'sidebar';
+      closePanel();
+      return getPanelStatus();
+    }
     const minimized = forceAwake ? false : !state.enabled || Boolean(state.minimized);
     showPanelShell(state);
     setMinimized(minimized, false);
@@ -169,6 +187,11 @@
 
   async function autoOpenPanel() {
     const state = await getState();
+    if (normalizeDisplayMode(state.displayMode) === 'sidebar') {
+      displayMode = 'sidebar';
+      closePanel();
+      return;
+    }
     showPanelShell(state);
 
     if (!state.enabled) {
@@ -205,8 +228,33 @@
       ...(state.panel || {})
     });
     webuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
+    displayMode = normalizeDisplayMode(state.displayMode);
+    panel.dataset.displayMode = displayMode;
     panel.hidden = false;
     applyPanelStyles(panel, currentPanel);
+  }
+
+  function applyDisplayMode(mode) {
+    displayMode = mode;
+    if (mode === 'sidebar') {
+      closePanel();
+      return;
+    }
+    if (!panel) {
+      ensurePanel();
+    }
+    panel.dataset.displayMode = mode;
+    if (mode === 'fullscreen') {
+      if (panel.dataset.minimized !== 'true') {
+        ensureFrameLoaded();
+      }
+    } else {
+      applyPanelStyles(panel, currentPanel);
+      if (panel.dataset.minimized !== 'true') {
+        ensureFrameLoaded();
+      }
+    }
+    saveState({ displayMode: mode });
   }
 
   function ensurePanel() {
@@ -471,6 +519,60 @@
         cursor: nwse-resize;
       }
 
+      #${PANEL_ID}[data-display-mode="fullscreen"] {
+        position: fixed !important;
+        inset: 0 !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        max-width: none !important;
+        max-height: none !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        pointer-events: none !important;
+        grid-template-rows: 0 0 minmax(0, 1fr) !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"] .toolbar,
+      #${PANEL_ID}[data-display-mode="fullscreen"] .routes,
+      #${PANEL_ID}[data-display-mode="fullscreen"] .resize,
+      #${PANEL_ID}[data-display-mode="fullscreen"] .offline {
+        display: none !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"] .content {
+        background: transparent !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"] #${FRAME_ID} {
+        width: 100% !important;
+        height: 100% !important;
+        background: transparent !important;
+        pointer-events: auto !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"] #${WAKE_ID} {
+        display: flex !important;
+        position: fixed !important;
+        top: 16px;
+        right: 16px;
+        width: auto !important;
+        min-width: 96px;
+        height: 36px !important;
+        padding: 0 14px;
+        border-radius: 999px !important;
+        pointer-events: auto !important;
+        z-index: 5;
+        cursor: pointer;
+      }
+
       #${PANEL_ID}[data-resize-direction="e"],
       #${PANEL_ID}[data-resize-direction="e"] * {
         cursor: ew-resize !important;
@@ -495,6 +597,7 @@
     panel.hidden = true;
     panel.dataset.minimized = 'true';
     panel.dataset.routesOpen = 'false';
+    panel.dataset.displayMode = 'floating';
 
     wakeButton = document.createElement('button');
     wakeButton.id = WAKE_ID;
@@ -506,6 +609,13 @@
     wakeButton.addEventListener('pointerup', endWakeDrag);
     wakeButton.addEventListener('pointercancel', endWakeDrag);
     wakeButton.addEventListener('lostpointercapture', endWakeDrag);
+    wakeButton.addEventListener('click', () => {
+      if (displayMode !== 'fullscreen' || !panel) {
+        return;
+      }
+      const isHidden = panel.dataset.minimized !== 'false';
+      setMinimized(!isHidden, true);
+    });
 
     const toolbarEl = document.createElement('header');
     toolbarEl.className = 'toolbar';
@@ -545,7 +655,7 @@
         id="${FRAME_ID}"
         title="N.E.K.O WebUI"
         allowtransparency="true"
-        allow="autoplay; microphone; camera; display-capture; clipboard-read; clipboard-write"
+        allow="autoplay; microphone; camera; display-capture; clipboard-read; clipboard-write; local-network-access*"
         referrerpolicy="no-referrer-when-downgrade"
       ></iframe>
       <div class="offline" data-offline hidden>
@@ -596,8 +706,8 @@
       setOnline(null);
       if (frame) {
         const target = webuiUrl || DEFAULT_STATE.webuiUrl;
-        try { frame.src = 'about:blank'; } catch {}
-        frame.src = target;
+      try { frame.src = 'about:blank'; } catch {}
+      frame.src = target;
       }
       checkHealth();
       return;
@@ -740,12 +850,11 @@
   }
 
   async function wakePanel() {
-    const response = await chrome.runtime.sendMessage({ type: 'NEKO_WAKE_PANEL' }).catch(() => null);
-    if (response?.ok) {
-      setMinimized(false, true);
-      return;
-    }
-    setMinimized(false, true);
+    const response = await Promise.race([
+      chrome.runtime.sendMessage({ type: 'NEKO_WAKE_PANEL' }).catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 2000))
+    ]);
+    setMinimized(false, response?.ok ? false : true);
   }
 
   function bindToolbarDrag(handle) {
@@ -860,6 +969,9 @@
   }
 
   function startWakeDrag(event) {
+    if (displayMode === 'fullscreen') {
+      return;
+    }
     if (event.button !== 0 || !panel || !wakeButton || panel.dataset.minimized !== 'true') {
       return;
     }
@@ -914,7 +1026,7 @@
       event.preventDefault();
       event.stopPropagation();
       saveState({ panel: currentPanel });
-    } else if (event.type === 'pointerup') {
+    } else {
       wakePanel();
     }
   }
@@ -972,6 +1084,9 @@
   }
 
   function applyPanelStyles(target, nextPanel) {
+    if (target.dataset.displayMode === 'fullscreen') {
+      return;
+    }
     target.style.width = `${nextPanel.width}px`;
     target.style.height = `${nextPanel.height}px`;
     target.style.right = `${nextPanel.right}px`;
@@ -1013,6 +1128,13 @@
       minimized,
       awake: isPanelVisible() && !minimized
     };
+  }
+
+  function normalizeDisplayMode(mode) {
+    if (mode === 'fullscreen' || mode === 'sidebar') {
+      return mode;
+    }
+    return 'floating';
   }
 
   function canInjectHere() {

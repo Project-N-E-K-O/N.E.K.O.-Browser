@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>N.E.K.O 侧栏</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="toolbar">
+      <div class="brand">
+        <span class="status-dot" id="status" aria-hidden="true"></span>
+        <span>N.E.K.O</span>
+      </div>
+      <nav class="actions" aria-label="侧栏操作">
+        <button type="button" data-action="reload" title="刷新 WebUI" aria-label="刷新 WebUI">↻</button>
+        <button type="button" data-action="routes" title="入口" aria-label="入口">☰</button>
+        <button type="button" data-action="open" title="打开完整页面" aria-label="打开完整页面">↗</button>
+      </nav>
+    </header>
+
+    <nav class="routes" id="routes" aria-label="N.E.K.O 入口" hidden>
+      <button type="button" data-route="/">主界面</button>
+      <button type="button" data-route="/chat_full">完整聊天</button>
+      <button type="button" data-route="/model_manager">模型</button>
+      <button type="button" data-route="/api_key">密钥</button>
+      <button type="button" data-route="/memory_browser">记忆</button>
+    </nav>
+
+    <main class="content">
+      <iframe
+        id="webui"
+        name="neko-native-sidepanel"
+        title="N.E.K.O WebUI"
+        allowtransparency="true"
+        allow="autoplay *; microphone *; camera *; display-capture *; clipboard-read *; clipboard-write *; local-network-access *"
+        referrerpolicy="no-referrer-when-downgrade"
+      ></iframe>
+      <section class="offline" id="offline" hidden>
+        <strong>N.E.K.O WebUI 未连接</strong>
+        <span id="offline-message">确认本地服务已运行在 http://localhost:48911/</span>
+        <button type="button" data-action="retry">重试</button>
+      </section>
+    </main>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

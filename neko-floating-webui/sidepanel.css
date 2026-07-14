@@ -1,0 +1,214 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: 42px 0 minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  background: #f8fafc;
+}
+
+.shell[data-routes-open="true"] {
+  grid-template-rows: 42px auto minmax(0, 1fr);
+}
+
+.toolbar {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.brand,
+.actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.brand {
+  min-width: 0;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+.status-dot[data-state="online"] {
+  background: #16a34a;
+}
+
+.status-dot[data-state="offline"] {
+  background: #dc2626;
+}
+
+.actions {
+  gap: 4px;
+}
+
+.actions button,
+.routes button,
+.offline button {
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.actions button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.actions button:hover,
+.routes button:hover,
+.offline button:hover {
+  border-color: rgba(79, 70, 229, 0.32);
+  background: #eef2ff;
+}
+
+.routes {
+  grid-row: 2;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(248, 250, 252, 0.96);
+}
+
+.routes[hidden] {
+  display: none;
+}
+
+.routes button {
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.content {
+  grid-row: 3;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #f8fafc;
+}
+
+#webui {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.offline {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.offline[hidden] {
+  display: none;
+}
+
+.offline strong {
+  font-size: 15px;
+}
+
+.offline span {
+  max-width: 300px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.offline button {
+  justify-self: center;
+  height: 32px;
+  padding: 0 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  .shell,
+  .content,
+  .offline {
+    color: #e2e8f0;
+    background: #0f172a;
+  }
+
+  .toolbar {
+    border-bottom-color: rgba(226, 232, 240, 0.14);
+    background: rgba(15, 23, 42, 0.96);
+  }
+
+  .routes {
+    border-bottom-color: rgba(226, 232, 240, 0.14);
+    background: rgba(15, 23, 42, 0.96);
+  }
+
+  .actions button,
+  .routes button,
+  .offline button {
+    border-color: rgba(226, 232, 240, 0.2);
+    background: #1e293b;
+    color: #e2e8f0;
+  }
+
+  .actions button:hover,
+  .routes button:hover,
+  .offline button:hover {
+    border-color: rgba(129, 140, 248, 0.55);
+    background: #312e81;
+  }
+
+  .offline span {
+    color: #94a3b8;
+  }
+}

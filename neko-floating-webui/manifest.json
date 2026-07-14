@@ -1,13 +1,18 @@
 {
   "manifest_version": 3,
   "name": "N.E.K.O Floating WebUI",
-  "description": "Show the local N.E.K.O WebUI as a floating panel on web pages.",
-  "version": "0.1.0",
+  "description": "Show the local N.E.K.O WebUI as a floating panel, fullscreen overlay, or native browser side panel.",
+  "version": "0.2.0",
+  "minimum_chrome_version": "142",
   "action": {
-    "default_title": "Toggle N.E.K.O Floating WebUI"
+    "default_title": "Toggle N.E.K.O Floating WebUI",
+    "default_popup": "popup.html"
   },
   "background": {
     "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://localhost:48911 http://127.0.0.1:48911; frame-src http://localhost:48911 http://127.0.0.1:48911;"
@@ -17,7 +22,8 @@
     "alarms",
     "scripting",
     "storage",
-    "offscreen"
+    "offscreen",
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>",

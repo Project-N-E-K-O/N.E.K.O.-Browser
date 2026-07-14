@@ -5,9 +5,12 @@
 
   window.__nekoFloatingTransparentMainWorld = true;
   document.documentElement.dataset.nekoFloatingTransparentMainWorld = 'enabled';
+  const isNativeSidePanel = window.name === 'neko-native-sidepanel';
+  if (isNativeSidePanel) {
+    document.documentElement.dataset.nekoNativeSidePanel = 'enabled';
+  }
 
   patchLive2DManager();
-  patchGetUserMedia();
   patchAudioContextAutoResume();
   forceTransparentRenderers();
 
@@ -103,7 +106,7 @@
     return true;
   }
 
-  if (!patchGetUserMedia()) {
+  if (!isNativeSidePanel && !patchGetUserMedia()) {
     const pollId = window.setInterval(() => {
       if (patchGetUserMedia()) {
         window.clearInterval(pollId);

@@ -3,6 +3,8 @@ const DEFAULT_STATE = {
   minimized: true,
   wakeStateInitialized: true,
   activeTabId: null,
+  activeSidePanelWindowId: null,
+  displayMode: 'floating',
   panel: {
     width: 420,
     height: 680,
@@ -22,6 +24,7 @@ const PANEL_HANDOFF_UNLOAD_DELAY_MS = 1200;
 const PANEL_SWEEP_ALARM = 'neko-floating-ws-singleton-sweep';
 const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
 let panelSyncSeq = 0;
+let sidePanelTransition = Promise.resolve();
 
 chrome.runtime.onInstalled.addListener(async () => {
   const current = await chrome.storage.local.get(null);
@@ -37,6 +40,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     minimized,
     wakeStateInitialized: true,
     activeTabId: null,
+    activeSidePanelWindowId: null,
+    displayMode: normalizeDisplayMode(current.displayMode),
     panel: {
       ...DEFAULT_STATE.panel,
       ...(current.panel || {})
@@ -47,6 +52,21 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(() => {
   schedulePanelSweep();
+  queueSidePanelTransition(resetStartupSidePanelState).catch(() => {});
+});
+
+chrome.sidePanel.onOpened.addListener((info) => {
+  if (!isNekoSidePanelPath(info.path)) {
+    return;
+  }
+  queueSidePanelTransition(() => claimSidePanel(info.windowId)).catch(() => {});
+});
+
+chrome.sidePanel.onClosed.addListener((info) => {
+  if (!isNekoSidePanelPath(info.path)) {
+    return;
+  }
+  queueSidePanelTransition(() => releaseSidePanel(info.windowId, true)).catch(() => {});
 });
 
 if (chrome.alarms) {
@@ -65,13 +85,16 @@ setTimeout(() => {
   syncLastFocusedPanel().catch(() => {});
 }, 500);
 
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id || !isInjectableTab(tab.url)) {
+async function handleActionClick(tab) {
+  if (!tab || !tab.id || !isInjectableTab(tab.url)) {
     return;
   }
   panelSyncSeq += 1;
 
   const state = await getStoredState();
+  if (state.displayMode === 'sidebar') {
+    return;
+  }
   const activeTabId = await getLiveActiveTabId(state);
 
   if (activeTabId && activeTabId !== tab.id) {
@@ -100,7 +123,7 @@ chrome.action.onClicked.addListener(async (tab) => {
     enabled: Boolean(response?.visible || response?.awake),
     minimized: Boolean(response?.minimized)
   });
-});
+}
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   const syncSeq = ++panelSyncSeq;
@@ -170,6 +193,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     sendResponse({ ok: Boolean(url) });
     return false;
+  }
+
+  if (message.type === 'NEKO_TOGGLE_FROM_POPUP') {
+    (async () => {
+      const state = await getStoredState();
+      if (state.displayMode === 'sidebar') {
+        sendResponse({ ok: false, error: 'Use the native side panel toggle in popup.' });
+        return;
+      }
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+      if (tab && isInjectableTab(tab.url)) {
+        await handleActionClick(tab);
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+
+  if (message.type === 'NEKO_SET_DISPLAY_MODE') {
+    const mode = normalizeDisplayMode(message.mode);
+    queueSidePanelTransition(() => setDisplayMode(mode))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (message.type === 'NEKO_SIDEBAR_CLAIM') {
+    queueSidePanelTransition(() => claimSidePanel(message.windowId))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (message.type === 'NEKO_SIDEBAR_RELEASE') {
+    queueSidePanelTransition(() => releaseSidePanel(message.windowId, false))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
   }
 
   if (message.type === 'NEKO_HEALTH_CHECK') {
@@ -289,6 +350,183 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+function queueSidePanelTransition(task) {
+  const next = sidePanelTransition.then(task, task);
+  sidePanelTransition = next.catch(() => {});
+  return next;
+}
+
+async function resetStartupSidePanelState() {
+  const state = await getStoredState();
+  const payload = {
+    activeSidePanelWindowId: null,
+    activeTabId: null
+  };
+  if (state.displayMode === 'sidebar') {
+    payload.enabled = false;
+    payload.minimized = true;
+    payload.wakeStateInitialized = true;
+  }
+  await chrome.storage.local.set(payload);
+}
+
+async function setDisplayMode(mode) {
+  const previous = await getStoredState();
+  panelSyncSeq += 1;
+
+  if (mode === 'sidebar') {
+    await deactivateAllTabPanels();
+    const activeSidePanelWindowId = previous.displayMode === 'sidebar'
+      ? normalizeWindowId(previous.activeSidePanelWindowId)
+      : null;
+    await chrome.storage.local.set({
+      displayMode: 'sidebar',
+      activeTabId: null,
+      activeSidePanelWindowId,
+      enabled: activeSidePanelWindowId !== null,
+      minimized: activeSidePanelWindowId === null,
+      wakeStateInitialized: true
+    });
+    return { ok: true, mode: 'sidebar' };
+  }
+
+  const previousSidePanelWindowId = normalizeWindowId(previous.activeSidePanelWindowId);
+  const shouldTransferAwakePanel = previous.displayMode === 'sidebar'
+    && previous.enabled === true
+    && previousSidePanelWindowId !== null;
+
+  if (previousSidePanelWindowId !== null) {
+    await deactivateSidePanelWindow(previousSidePanelWindowId);
+  }
+
+  await chrome.storage.local.set({
+    displayMode: mode,
+    activeSidePanelWindowId: null,
+    activeTabId: null
+  });
+
+  if (previousSidePanelWindowId !== null) {
+    await chrome.sidePanel.close({ windowId: previousSidePanelWindowId });
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  if (!tab?.id || !isInjectableTab(tab.url)) {
+    return { ok: true, mode, transferred: false };
+  }
+
+  const ready = await ensureContentScript(tab.id);
+  if (!ready) {
+    return { ok: true, mode, transferred: false };
+  }
+
+  await sendTabMessage(tab.id, { type: 'NEKO_APPLY_DISPLAY_MODE', mode });
+  if (!shouldTransferAwakePanel) {
+    return { ok: true, mode, transferred: false };
+  }
+
+  await activatePanelInTab(tab.id);
+  const response = await sendTabMessage(tab.id, { type: 'NEKO_OPEN_SINGLETON' });
+  await chrome.storage.local.set({
+    activeTabId: response?.awake ? tab.id : null,
+    enabled: Boolean(response?.visible || response?.awake),
+    minimized: Boolean(response?.minimized)
+  });
+  return { ok: true, mode, transferred: Boolean(response?.awake) };
+}
+
+async function claimSidePanel(windowId) {
+  const nextWindowId = normalizeWindowId(windowId);
+  if (nextWindowId === null) {
+    throw new Error('Invalid side panel window id.');
+  }
+
+  panelSyncSeq += 1;
+  const state = await getStoredState();
+  const previousWindowId = normalizeWindowId(state.activeSidePanelWindowId);
+
+  if (previousWindowId !== null && previousWindowId !== nextWindowId) {
+    await deactivateSidePanelWindow(previousWindowId);
+    await chrome.sidePanel.close({ windowId: previousWindowId });
+  }
+
+  await deactivateAllTabPanels();
+  await chrome.storage.local.set({
+    displayMode: 'sidebar',
+    activeSidePanelWindowId: nextWindowId,
+    activeTabId: null,
+    enabled: true,
+    minimized: false,
+    wakeStateInitialized: true
+  });
+
+  return {
+    ok: true,
+    owner: true,
+    windowId: nextWindowId,
+    state: await getStoredState()
+  };
+}
+
+async function releaseSidePanel(windowId, alreadyClosed) {
+  const closingWindowId = normalizeWindowId(windowId);
+  if (closingWindowId === null) {
+    return { ok: false, released: false };
+  }
+
+  const state = await getStoredState();
+  if (normalizeWindowId(state.activeSidePanelWindowId) !== closingWindowId) {
+    return { ok: true, released: false };
+  }
+
+  if (!alreadyClosed) {
+    await deactivateSidePanelWindow(closingWindowId);
+  }
+
+  await chrome.storage.local.set({
+    activeSidePanelWindowId: null,
+    activeTabId: null,
+    enabled: false,
+    minimized: true,
+    wakeStateInitialized: true
+  });
+  return { ok: true, released: true };
+}
+
+async function deactivateSidePanelWindow(windowId) {
+  try {
+    const response = await withTimeout(
+      chrome.runtime.sendMessage({
+        type: 'NEKO_SIDEBAR_DEACTIVATE',
+        windowId
+      }),
+      1500,
+      'side panel deactivation'
+    );
+    if (response?.unloaded === true) {
+      await delay(PANEL_HANDOFF_UNLOAD_DELAY_MS);
+    }
+    return response;
+  } catch {
+    return null;
+  }
+}
+
+async function deactivateAllTabPanels() {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  let unloadedAny = false;
+  await Promise.all(tabs.map(async (tab) => {
+    if (!tab.id) {
+      return;
+    }
+    const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_CLOSE' });
+    unloadedAny = unloadedAny || response?.unloaded === true;
+  }));
+  if (unloadedAny) {
+    await delay(PANEL_HANDOFF_UNLOAD_DELAY_MS);
+  }
+  return unloadedAny;
+}
+
 async function ensureContentScript(tabId) {
   const ping = await sendTabMessage(tabId, { type: 'NEKO_PING' });
   if (ping?.ok) {
@@ -322,6 +560,15 @@ async function autoAttachPanel(tabId) {
   const state = await getStoredState();
   const tab = await getTab(tabId);
 
+  if (state.displayMode === 'sidebar') {
+    await sendTabMessage(tabId, { type: 'NEKO_FORCE_CLOSE' });
+    return {
+      ok: true,
+      minimized: true,
+      awake: false
+    };
+  }
+
   if (state.minimized === false && tab?.active && isInjectableTab(tab.url)) {
     await activatePanelInTab(tabId);
     return {
@@ -339,6 +586,15 @@ async function autoAttachPanel(tabId) {
 }
 
 async function wakePanelInTab(tabId) {
+  const state = await getStoredState();
+  if (state.displayMode === 'sidebar') {
+    await sendTabMessage(tabId, { type: 'NEKO_FORCE_CLOSE' });
+    return {
+      ok: false,
+      minimized: true,
+      awake: false
+    };
+  }
   await activatePanelInTab(tabId);
 
   return {
@@ -350,6 +606,11 @@ async function wakePanelInTab(tabId) {
 
 async function syncPanelToTab(tabId, syncSeq) {
   const state = await getStoredState();
+  if (state.displayMode === 'sidebar') {
+    await deactivateAllTabPanels();
+    await chrome.storage.local.set({ activeTabId: null });
+    return { ok: true, minimized: true, awake: false };
+  }
   const tab = await getTab(tabId);
   if (!tab || !isInjectableTab(tab.url)) {
     await enforceSingleActivePanel(null);
@@ -401,6 +662,9 @@ async function syncPanelToTab(tabId, syncSeq) {
 
 async function activatePanelInTab(tabId) {
   const state = await getStoredState();
+  if (state.displayMode === 'sidebar') {
+    return false;
+  }
   const activeTabId = await getLiveActiveTabId(state);
 
   if (activeTabId && activeTabId !== tabId) {
@@ -415,6 +679,7 @@ async function activatePanelInTab(tabId) {
   });
 
   await enforceSingleActivePanel(tabId);
+  return true;
 }
 
 async function syncFocusedWindowPanel(windowId, syncSeq) {
@@ -460,7 +725,7 @@ function schedulePanelSweep() {
 
 async function sweepPanelSingleton() {
   const state = await getStoredState();
-  if (!state.enabled || state.minimized !== false) {
+  if (state.displayMode === 'sidebar' || !state.enabled || state.minimized !== false) {
     return;
   }
 
@@ -503,6 +768,8 @@ async function getStoredState() {
   return {
     ...DEFAULT_STATE,
     ...stored,
+    displayMode: normalizeDisplayMode(stored.displayMode),
+    activeSidePanelWindowId: normalizeWindowId(stored.activeSidePanelWindowId),
     panel: {
       ...DEFAULT_STATE.panel,
       ...(stored.panel || {})
@@ -531,6 +798,25 @@ function isInjectableTab(url) {
   }
 
   return /^https?:\/\//i.test(url) && !/^https?:\/\/(?:localhost|127\.0\.0\.1):48911(?:\/|$)/i.test(url);
+}
+
+function normalizeDisplayMode(mode) {
+  if (mode === 'fullscreen' || mode === 'sidebar') {
+    return mode;
+  }
+  return 'floating';
+}
+
+function normalizeWindowId(windowId) {
+  if (windowId === null || windowId === undefined || windowId === '') {
+    return null;
+  }
+  const normalized = Number(windowId);
+  return Number.isInteger(normalized) && normalized >= 0 ? normalized : null;
+}
+
+function isNekoSidePanelPath(path) {
+  return typeof path === 'string' && /(?:^|\/)sidepanel\.html(?:[?#].*)?$/.test(path);
 }
 
 function normalizeNekoUrl(url) {
