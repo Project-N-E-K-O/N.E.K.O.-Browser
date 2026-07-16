@@ -23,6 +23,7 @@ const DEFAULT_STATE = {
     right: 24,
     bottom: 24
   },
+  wakeFullscreen: null,
   webuiUrl: 'http://localhost:48911/'
 };
 

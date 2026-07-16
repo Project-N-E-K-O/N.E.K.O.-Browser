@@ -4,9 +4,10 @@
   const FRAME_ID = 'neko-floating-webui-frame';
   const WAKE_ID = 'neko-floating-webui-wake';
 
-  const MINIMIZED_SIZE = { width: 210, height: 48 };
+  const MINIMIZED_SIZE = { width: 96, height: 96 };
   const MIN_SIZE = { width: 320, height: 420 };
   const WAKE_DRAG_THRESHOLD = 4;
+  const WAKE_IMAGE_URL = chrome.runtime.getURL('assets/cat-idle-cat1.gif');
   const EMBED_PROTOCOL_VERSION = 1;
   const EMBED_PROTOCOL_FALLBACK_MS = 1500;
   const EMBED_SURFACE_COMPONENT_ORDER = Object.freeze([
@@ -30,6 +31,7 @@
       right: 24,
       bottom: 24
     },
+    wakeFullscreen: null,
     webuiUrl: 'http://localhost:48911/'
   };
 
@@ -43,6 +45,8 @@
   window.__nekoFloatingWebuiLoaded = true;
 
   let currentPanel = { ...DEFAULT_STATE.panel };
+  let wakeFullscreenPos = null;
+  let suppressNextClick = false;
   let webuiUrl = DEFAULT_STATE.webuiUrl;
   let displayMode = DEFAULT_STATE.displayMode;
   let surfaceComponents = DEFAULT_STATE.surfaceComponents.slice();
@@ -278,6 +282,7 @@
       ...DEFAULT_STATE.panel,
       ...(state.panel || {})
     });
+    wakeFullscreenPos = normalizeWakeFullscreenPos(state.wakeFullscreen);
     webuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
     displayMode = normalizeDisplayMode(state.displayMode);
     surfaceComponents = normalizeSurfaceComponents(state.surfaceComponents);
@@ -285,6 +290,7 @@
     syncSurfaceComponentControls();
     panel.dataset.displayMode = displayMode;
     panel.hidden = false;
+    applyWakeFullscreenPos();
     applyPanelStyles(panel, currentPanel);
   }
 
@@ -299,6 +305,10 @@
       ensurePanel();
     }
     panel.dataset.displayMode = mode;
+    // 切换显示模式时重置全屏胶囊定位（进入全屏时恢复已保存位置，离开全屏时清除 inline）
+    if (previousMode !== mode) {
+      applyWakeFullscreenPos();
+    }
     if (previousMode !== mode) {
       resetEmbedPassthrough('display-mode-change');
     }
@@ -365,35 +375,34 @@
         min-width: ${MINIMIZED_SIZE.width}px;
         min-height: ${MINIMIZED_SIZE.height}px;
         border: 0;
-        border-radius: 999px;
+        border-radius: 0;
+        overflow: visible;
+        box-shadow: none;
       }
 
       #${WAKE_ID} {
         display: none;
         align-items: center;
         justify-content: center;
-        gap: 8px;
         width: 100%;
         height: 100%;
-        border: 1px solid rgba(15, 23, 42, 0.18);
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.92);
+        border: 0;
+        border-radius: 0;
+        background: transparent;
         color: #0f172a;
         box-sizing: border-box;
         cursor: grab;
-        font: 650 13px "Segoe UI", Arial, sans-serif;
-        letter-spacing: 0;
-        backdrop-filter: blur(14px);
+        padding: 0;
         touch-action: none;
         user-select: none;
       }
 
-      #${WAKE_ID}::before {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #16a34a;
+      #${WAKE_ID} .wake-art {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+        pointer-events: none;
       }
 
       #${PANEL_ID}[data-minimized="true"] #${WAKE_ID} {
@@ -671,14 +680,13 @@
         position: fixed !important;
         top: 16px;
         right: 16px;
-        width: auto !important;
-        min-width: 96px;
-        height: 36px !important;
-        padding: 0 14px;
-        border-radius: 999px !important;
+        width: 72px !important;
+        height: 72px !important;
+        padding: 0;
+        border-radius: 0 !important;
         pointer-events: auto !important;
         z-index: 5;
-        cursor: pointer;
+        cursor: grab;
       }
 
       #${PANEL_ID}[data-resize-direction="e"],
@@ -714,13 +722,26 @@
     wakeButton.id = WAKE_ID;
     wakeButton.type = 'button';
     wakeButton.title = '唤醒 N.E.K.O 面板';
-    wakeButton.textContent = 'N.E.K.O';
+    wakeButton.draggable = false;
+    const wakeImage = document.createElement('img');
+    wakeImage.src = WAKE_IMAGE_URL;
+    wakeImage.alt = '';
+    wakeImage.draggable = false;
+    wakeImage.className = 'wake-art';
+    wakeButton.append(wakeImage);
+    // 阻止 <img> 的 native drag 干扰 pointer capture（导致浮窗模式拖动失效）
+    wakeButton.addEventListener('dragstart', (event) => event.preventDefault());
     wakeButton.addEventListener('pointerdown', startWakeDrag);
     wakeButton.addEventListener('pointermove', moveWakeDrag);
     wakeButton.addEventListener('pointerup', endWakeDrag);
     wakeButton.addEventListener('pointercancel', endWakeDrag);
     wakeButton.addEventListener('lostpointercapture', endWakeDrag);
     wakeButton.addEventListener('click', () => {
+      // 拖动结束后抑制一次 click，避免全屏模式误切换显示/隐藏
+      if (suppressNextClick) {
+        suppressNextClick = false;
+        return;
+      }
       if (displayMode !== 'fullscreen' || !panel) {
         return;
       }
@@ -783,7 +804,7 @@
         id="${FRAME_ID}"
         title="N.E.K.O WebUI"
         allowtransparency="true"
-        allow="autoplay; microphone; camera; display-capture; clipboard-read; clipboard-write; local-network-access*"
+        allow="autoplay; microphone; camera; display-capture; clipboard-read; clipboard-write; local-network-access"
         referrerpolicy="no-referrer-when-downgrade"
       ></iframe>
       <div class="offline" data-offline hidden>
@@ -950,7 +971,27 @@
     }).catch(() => {});
   }
 
+  function isFrameReadyForWebui() {
+    if (!frame) {
+      return false;
+    }
+    try {
+      if (new URL(frame.src).origin !== getWebuiOrigin()) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+    // frame.src 是 localhost，但需确认实际加载了跨域文档：
+    // about:blank 继承父域时 contentDocument 可访问（非 null）；
+    // localhost 跨域加载成功时 contentDocument 为 null。
+    return frame.contentDocument === null;
+  }
+
   function onWebuiLoad() {
+    if (!isFrameReadyForWebui()) {
+      return;
+    }
     setOnline(true);
     scheduleWebuiReflow();
     setupPcmMessagePort();
@@ -964,6 +1005,9 @@
     }
     [0, 80, 240, 600, 1200].forEach((delay) => {
       window.setTimeout(() => {
+        if (!isFrameReadyForWebui()) {
+          return;
+        }
         try {
           frame.contentWindow?.postMessage({
             type: 'NEKO_FLOATING_WEBUI_REFLOW'
@@ -1169,21 +1213,39 @@
   }
 
   function startWakeDrag(event) {
-    if (displayMode === 'fullscreen') {
+    if (event.button !== 0 || !panel || !wakeButton) {
       return;
     }
-    if (event.button !== 0 || !panel || !wakeButton || panel.dataset.minimized !== 'true') {
+    // 新的 pointerdown，清除上次可能残留的 click 抑制标志（如 pointercancel 未产生 click）
+    suppressNextClick = false;
+    const isFullscreen = displayMode === 'fullscreen';
+    // 浮窗模式下只有最小化时才允许拖动胶囊；全屏模式下胶囊常驻可拖动
+    if (!isFullscreen && panel.dataset.minimized !== 'true') {
       return;
     }
     event.stopPropagation();
-    wakeDragSession = {
-      pointerId: event.pointerId,
-      startX: getPointerScreenX(event),
-      startY: getPointerScreenY(event),
-      startRight: currentPanel.right,
-      startBottom: currentPanel.bottom,
-      moved: false
-    };
+    if (isFullscreen) {
+      const rect = wakeButton.getBoundingClientRect();
+      wakeDragSession = {
+        pointerId: event.pointerId,
+        startX: getPointerScreenX(event),
+        startY: getPointerScreenY(event),
+        mode: 'fullscreen',
+        startLeft: rect.left,
+        startTop: rect.top,
+        moved: false
+      };
+    } else {
+      wakeDragSession = {
+        pointerId: event.pointerId,
+        startX: getPointerScreenX(event),
+        startY: getPointerScreenY(event),
+        mode: 'floating',
+        startRight: currentPanel.right,
+        startBottom: currentPanel.bottom,
+        moved: false
+      };
+    }
     panel.dataset.wakeDragging = 'true';
     try { wakeButton.setPointerCapture(event.pointerId); } catch {}
   }
@@ -1202,12 +1264,24 @@
       return;
     }
     wakeDragSession.moved = true;
-    currentPanel = clampMinimizedPanelPosition({
-      ...currentPanel,
-      right: wakeDragSession.startRight - deltaX,
-      bottom: wakeDragSession.startBottom - deltaY
-    });
-    applyPanelStyles(panel, currentPanel);
+
+    if (wakeDragSession.mode === 'fullscreen') {
+      const size = wakeButton.offsetWidth || 72;
+      const maxLeft = Math.max(0, window.innerWidth - size);
+      const maxTop = Math.max(0, window.innerHeight - size);
+      const left = Math.max(0, Math.min(Math.round(wakeDragSession.startLeft + deltaX), maxLeft));
+      const top = Math.max(0, Math.min(Math.round(wakeDragSession.startTop + deltaY), maxTop));
+      wakeButton.style.left = `${left}px`;
+      wakeButton.style.top = `${top}px`;
+      wakeButton.style.right = 'auto';
+    } else {
+      currentPanel = clampMinimizedPanelPosition({
+        ...currentPanel,
+        right: wakeDragSession.startRight - deltaX,
+        bottom: wakeDragSession.startBottom - deltaY
+      });
+      applyPanelStyles(panel, currentPanel);
+    }
   }
 
   function endWakeDrag(event) {
@@ -1215,6 +1289,7 @@
       return;
     }
     const moved = wakeDragSession.moved;
+    const mode = wakeDragSession.mode;
     wakeDragSession = null;
     if (panel) {
       delete panel.dataset.wakeDragging;
@@ -1225,8 +1300,20 @@
     if (moved) {
       event.preventDefault();
       event.stopPropagation();
-      saveState({ panel: currentPanel });
-    } else {
+      // 抑制拖动结束后合成的 click 事件，避免全屏模式误切换显示/隐藏
+      suppressNextClick = true;
+      if (mode === 'floating') {
+        saveState({ panel: currentPanel });
+      } else if (mode === 'fullscreen') {
+        const left = parseFloat(wakeButton?.style.left);
+        const top = parseFloat(wakeButton?.style.top);
+        if (Number.isFinite(left) && Number.isFinite(top)) {
+          wakeFullscreenPos = { left, top };
+          saveState({ wakeFullscreen: { left, top } });
+        }
+      }
+    } else if (mode === 'floating') {
+      // 浮窗模式：未拖动则唤醒面板；全屏模式交由 click 事件处理隐藏/显示切换
       wakePanel();
     }
   }
@@ -1328,6 +1415,9 @@
   }
 
   function postEmbedMessage(payload) {
+    if (!isFrameReadyForWebui()) {
+      return;
+    }
     try {
       frame?.contentWindow?.postMessage(payload, getWebuiOrigin());
     } catch {}
@@ -1573,6 +1663,39 @@
     target.style.bottom = `${nextPanel.bottom}px`;
   }
 
+  function normalizeWakeFullscreenPos(value) {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const left = Math.round(Number(value.left));
+    const top = Math.round(Number(value.top));
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+      return null;
+    }
+    const size = 72;
+    const maxLeft = Math.max(0, window.innerWidth - size);
+    const maxTop = Math.max(0, window.innerHeight - size);
+    return {
+      left: Math.max(0, Math.min(left, maxLeft)),
+      top: Math.max(0, Math.min(top, maxTop))
+    };
+  }
+
+  function applyWakeFullscreenPos() {
+    if (!wakeButton) {
+      return;
+    }
+    if (displayMode === 'fullscreen' && wakeFullscreenPos) {
+      wakeButton.style.left = `${wakeFullscreenPos.left}px`;
+      wakeButton.style.top = `${wakeFullscreenPos.top}px`;
+      wakeButton.style.right = 'auto';
+    } else {
+      wakeButton.style.left = '';
+      wakeButton.style.top = '';
+      wakeButton.style.right = '';
+    }
+  }
+
   function normalizePanel(nextPanel) {
     const maxWidth = Math.max(MIN_SIZE.width, Math.floor(window.innerWidth * 0.9));
     const maxHeight = Math.max(MIN_SIZE.height, Math.floor(window.innerHeight * 0.9));
@@ -1711,6 +1834,11 @@
       pcmWebuiPort = null;
     };
     try { pcmWebuiPort.start(); } catch {}
+    if (!isFrameReadyForWebui()) {
+      try { pcmWebuiPort.close(); } catch {}
+      pcmWebuiPort = null;
+      return;
+    }
     try {
       frame.contentWindow.postMessage({
         type: 'NEKO_PCM_PORT',
@@ -1789,6 +1917,9 @@
       } catch {
         pcmWebuiPort = null;
       }
+    }
+    if (!isFrameReadyForWebui()) {
+      return;
     }
     try {
       frame?.contentWindow?.postMessage({ ...payload, _sender: 'floating' }, getWebuiOrigin());

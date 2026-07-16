@@ -61,6 +61,28 @@
     }
   }, 250);
 
+  function isReflowInteractionActive() {
+    const body = document.body;
+    if (body && (
+      body.classList.contains('react-chat-window-dragging')
+      || body.classList.contains('react-chat-window-resizing')
+      || body.classList.contains('neko-model-dragging')
+      || body.classList.contains('neko-agent-hud-dragging')
+      || body.classList.contains('jukebox-dragging')
+    )) {
+      return true;
+    }
+    return Boolean(document.querySelector([
+      '#subtitle-display.dragging',
+      '#subtitle-display.resizing',
+      '#chat-container.dragging',
+      '#chat-container.is-resizing',
+      '.card-companion-dragging',
+      '[data-dragging="true"]',
+      '[data-neko-cat1-playground-dragging]'
+    ].join(',')));
+  }
+
   function ensureRuntimeStyle() {
     let style = document.getElementById(STYLE_ID);
     if (style) {
@@ -148,9 +170,15 @@
   }
 
   function requestReflow() {
+    if (isReflowInteractionActive()) {
+      return;
+    }
     window.dispatchEvent(new Event('resize'));
 
     window.requestAnimationFrame(() => {
+      if (isReflowInteractionActive()) {
+        return;
+      }
       window.dispatchEvent(new Event('resize'));
       window.postMessage({
         type: 'NEKO_FLOATING_WEBUI_MAIN_WORLD_REFLOW'
