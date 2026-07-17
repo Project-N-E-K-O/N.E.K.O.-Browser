@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <style>
     body {
-      width: 232px;
+      width: 292px;
       margin: 0;
       font: 13px "Segoe UI", Arial, sans-serif;
       color: #0f172a;
@@ -57,6 +57,19 @@
       cursor: pointer;
     }
     .toggle:hover { background: #4338ca; }
+    .permission-button { margin-top: 0; }
+    .permission-button[data-state="granted"] {
+      background: #15803d;
+    }
+    .permission-button[data-state="granted"]:hover {
+      background: #166534;
+    }
+    .permission-button[data-state="denied"] {
+      background: #b91c1c;
+    }
+    .permission-button[data-state="denied"]:hover {
+      background: #991b1b;
+    }
     .components {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -99,9 +112,71 @@
       color: inherit;
       font: inherit;
     }
+    .setting-input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 9px;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 6px;
+      background: #ffffff;
+      color: inherit;
+      font: inherit;
+    }
+    .setting-input:focus,
+    .setting-select:focus {
+      outline: 2px solid rgba(79, 70, 229, 0.2);
+      border-color: rgba(79, 70, 229, 0.55);
+    }
+    .setting-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .setting-actions button {
+      flex: 1;
+      padding: 8px 9px;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 6px;
+      background: #ffffff;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+    }
+    .setting-actions .primary {
+      border-color: #4f46e5;
+      background: #4f46e5;
+      color: #ffffff;
+      font-weight: 600;
+    }
+    .setting-actions button:hover { background: #eef2ff; }
+    .setting-actions .primary:hover { background: #4338ca; }
   </style>
 </head>
 <body>
+  <div class="section">
+    <h3>前端地址</h3>
+    <input
+      class="setting-input"
+      id="webui-url"
+      type="url"
+      inputmode="url"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="http://localhost:48911/"
+      aria-label="N.E.K.O 前端地址"
+    >
+    <div class="setting-actions">
+      <button type="button" class="primary" id="save-webui-url">应用地址</button>
+      <button type="button" id="reset-webui-url">恢复默认</button>
+    </div>
+    <p class="hint" id="webui-url-hint">保存后会立即重载当前面板；自定义服务必须允许被 iframe 嵌入。</p>
+    <p class="error" id="error" role="alert" hidden></p>
+  </div>
+  <div class="section">
+    <h3>麦克风权限</h3>
+    <button type="button" class="toggle permission-button" id="authorize-microphone" data-state="unknown">授权麦克风</button>
+    <p class="hint" id="microphone-permission-hint">点击后会打开独立授权页，用于浮窗和全屏的扩展麦克风中继。</p>
+  </div>
   <div class="section">
     <h3>显示模式</h3>
     <div class="modes">
@@ -111,7 +186,6 @@
     </div>
     <button type="button" class="toggle" id="toggle">显示 / 隐藏面板</button>
     <p class="hint" id="hint">全屏显示时可点击和拖动 Live2D；需要操作原网页时，点击右上角胶囊隐藏叠加层。</p>
-    <p class="error" id="error" role="alert" hidden></p>
   </div>
   <div class="section">
     <h3>聊天框模式</h3>

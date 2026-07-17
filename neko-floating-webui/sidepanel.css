@@ -1,8 +1,19 @@
 :root {
   color-scheme: light dark;
   font-family: Inter, "Segoe UI", Arial, sans-serif;
-  color: #0f172a;
-  background: #f8fafc;
+  --sidebar-color: #0f172a;
+  --sidebar-toolbar: rgba(255, 255, 255, 0.96);
+  --sidebar-routes: rgba(248, 250, 252, 0.96);
+  --sidebar-offline: #f8fafc;
+  --sidebar-border: rgba(15, 23, 42, 0.1);
+  --sidebar-button-border: rgba(15, 23, 42, 0.14);
+  --sidebar-button-bg: #ffffff;
+  --sidebar-button-color: #0f172a;
+  --sidebar-button-hover-border: rgba(79, 70, 229, 0.32);
+  --sidebar-button-hover-bg: #eef2ff;
+  --sidebar-muted: #475569;
+  color: var(--sidebar-color);
+  background: transparent;
 }
 
 * {
@@ -15,6 +26,8 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 button {
@@ -26,7 +39,7 @@ button {
   grid-template-rows: 42px 0 minmax(0, 1fr);
   width: 100%;
   height: 100%;
-  background: #f8fafc;
+  background: transparent;
 }
 
 .shell[data-routes-open="true"] {
@@ -40,8 +53,8 @@ button {
   justify-content: space-between;
   gap: 8px;
   padding: 0 8px 0 12px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
-  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--sidebar-border);
+  background: var(--sidebar-toolbar);
 }
 
 .brand,
@@ -81,10 +94,10 @@ button {
 .actions button,
 .routes button,
 .offline button {
-  border: 1px solid rgba(15, 23, 42, 0.14);
+  border: 1px solid var(--sidebar-button-border);
   border-radius: 6px;
-  background: #fff;
-  color: #0f172a;
+  background: var(--sidebar-button-bg);
+  color: var(--sidebar-button-color);
   cursor: pointer;
 }
 
@@ -101,8 +114,8 @@ button {
 .actions button:hover,
 .routes button:hover,
 .offline button:hover {
-  border-color: rgba(79, 70, 229, 0.32);
-  background: #eef2ff;
+  border-color: var(--sidebar-button-hover-border);
+  background: var(--sidebar-button-hover-bg);
 }
 
 .routes {
@@ -111,8 +124,8 @@ button {
   gap: 6px;
   padding: 8px;
   overflow-x: auto;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
-  background: rgba(248, 250, 252, 0.96);
+  border-bottom: 1px solid var(--sidebar-border);
+  background: var(--sidebar-routes);
 }
 
 .routes[hidden] {
@@ -131,7 +144,7 @@ button {
   position: relative;
   min-width: 0;
   min-height: 0;
-  background: #f8fafc;
+  background: transparent;
 }
 
 #webui {
@@ -140,6 +153,10 @@ button {
   height: 100%;
   border: 0;
   background: transparent;
+  /* Match the browser side panel's used scheme. A mismatched cross-origin
+     iframe gets an opaque white canvas in Chromium even when html/body are
+     explicitly transparent. */
+  color-scheme: inherit;
 }
 
 .offline {
@@ -150,7 +167,7 @@ button {
   gap: 10px;
   padding: 24px;
   text-align: center;
-  background: #f8fafc;
+  background: var(--sidebar-offline);
 }
 
 .offline[hidden] {
@@ -163,7 +180,7 @@ button {
 
 .offline span {
   max-width: 300px;
-  color: #475569;
+  color: var(--sidebar-muted);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -175,40 +192,18 @@ button {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root,
-  .shell,
-  .content,
-  .offline {
-    color: #e2e8f0;
-    background: #0f172a;
-  }
-
-  .toolbar {
-    border-bottom-color: rgba(226, 232, 240, 0.14);
-    background: rgba(15, 23, 42, 0.96);
-  }
-
-  .routes {
-    border-bottom-color: rgba(226, 232, 240, 0.14);
-    background: rgba(15, 23, 42, 0.96);
-  }
-
-  .actions button,
-  .routes button,
-  .offline button {
-    border-color: rgba(226, 232, 240, 0.2);
-    background: #1e293b;
-    color: #e2e8f0;
-  }
-
-  .actions button:hover,
-  .routes button:hover,
-  .offline button:hover {
-    border-color: rgba(129, 140, 248, 0.55);
-    background: #312e81;
-  }
-
-  .offline span {
-    color: #94a3b8;
+  :root {
+    color-scheme: dark;
+    --sidebar-color: #e2e8f0;
+    --sidebar-toolbar: rgba(15, 23, 42, 0.96);
+    --sidebar-routes: rgba(15, 23, 42, 0.96);
+    --sidebar-offline: #0f172a;
+    --sidebar-border: rgba(226, 232, 240, 0.14);
+    --sidebar-button-border: rgba(226, 232, 240, 0.2);
+    --sidebar-button-bg: #1e293b;
+    --sidebar-button-color: #e2e8f0;
+    --sidebar-button-hover-border: rgba(129, 140, 248, 0.55);
+    --sidebar-button-hover-bg: #312e81;
+    --sidebar-muted: #94a3b8;
   }
 }

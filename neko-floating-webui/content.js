@@ -58,8 +58,8 @@
   let wakeButton = null;
   let toolbar = null;
   let routesEl = null;
-  let componentsEl = null;
   let offlineEl = null;
+  let offlineMessageEl = null;
   let statusDot = null;
 
   let dragSession = null;
@@ -163,6 +163,16 @@
       return false;
     }
 
+    if (message.type === 'NEKO_APPLY_WEBUI_URL') {
+      const applied = applyWebuiUrl(message.webuiUrl);
+      if (!applied) {
+        sendResponse({ ok: false, error: '前端地址必须是有效的 HTTP 或 HTTPS 地址。' });
+        return false;
+      }
+      sendResponse({ ok: true, webuiUrl: applied });
+      return false;
+    }
+
     return false;
   });
 
@@ -188,6 +198,23 @@
       handlePcmControlMessage(data);
     }
   });
+
+  const embeddingColorSchemeMedia = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+  const embeddingColorSchemeObserver = new MutationObserver(syncFrameColorScheme);
+  embeddingColorSchemeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class', 'style', 'data-theme', 'data-color-mode', 'data-darkreader-scheme']
+  });
+  if (document.body) {
+    embeddingColorSchemeObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-theme', 'data-color-mode', 'data-darkreader-scheme']
+    });
+  }
+  embeddingColorSchemeMedia?.addEventListener('change', syncFrameColorScheme);
+  window.addEventListener('pageshow', syncFrameColorScheme);
 
   autoOpenPanel().catch(() => {});
 
@@ -226,6 +253,10 @@
 
   async function openPanel(forceAwake = false) {
     const state = await getState();
+    if (isConfiguredFrontendPage(location.href, state.webuiUrl)) {
+      closePanel();
+      return getPanelStatus();
+    }
     if (normalizeDisplayMode(state.displayMode) === 'sidebar') {
       displayMode = 'sidebar';
       closePanel();
@@ -242,6 +273,10 @@
 
   async function autoOpenPanel() {
     const state = await getState();
+    if (isConfiguredFrontendPage(location.href, state.webuiUrl)) {
+      closePanel();
+      return;
+    }
     if (normalizeDisplayMode(state.displayMode) === 'sidebar') {
       displayMode = 'sidebar';
       closePanel();
@@ -284,10 +319,10 @@
     });
     wakeFullscreenPos = normalizeWakeFullscreenPos(state.wakeFullscreen);
     webuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
+    updateOfflineMessage();
     displayMode = normalizeDisplayMode(state.displayMode);
     surfaceComponents = normalizeSurfaceComponents(state.surfaceComponents);
     chatSurfaceMode = normalizeChatSurfaceMode(state.chatSurfaceMode);
-    syncSurfaceComponentControls();
     panel.dataset.displayMode = displayMode;
     panel.hidden = false;
     applyWakeFullscreenPos();
@@ -333,6 +368,7 @@
     wakeButton = shadow.getElementById(WAKE_ID);
 
     if (panel && frame && wakeButton) {
+      syncFrameColorScheme();
       return;
     }
 
@@ -341,6 +377,11 @@
     style.textContent = `
       :host {
         all: initial;
+        /* Chromium paints a white canvas behind a transparent cross-origin
+           iframe when its used color scheme differs from the embedding page.
+           Keep the shadow host in the page's scheme so floating/fullscreen
+           surfaces remain genuinely transparent on dark pages. */
+        color-scheme: inherit;
       }
 
       #${PANEL_ID} {
@@ -363,8 +404,7 @@
         font-family: Inter, "Segoe UI", Arial, sans-serif;
       }
 
-      #${PANEL_ID}[data-routes-open="true"],
-      #${PANEL_ID}[data-components-open="true"] {
+      #${PANEL_ID}[data-routes-open="true"] {
         grid-template-rows: 42px auto minmax(0, 1fr);
       }
 
@@ -415,7 +455,6 @@
 
       #${PANEL_ID}[data-minimized="true"] .toolbar,
       #${PANEL_ID}[data-minimized="true"] .routes,
-      #${PANEL_ID}[data-minimized="true"] .component-switches,
       #${PANEL_ID}[data-minimized="true"] .content,
       #${PANEL_ID}[data-minimized="true"] .resize {
         display: none;
@@ -519,49 +558,6 @@
         font-size: 12px;
       }
 
-      .component-switches {
-        grid-row: 2;
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px 10px;
-        padding: 10px 12px;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.1);
-        background: rgba(248, 250, 252, 0.94);
-        backdrop-filter: blur(14px);
-      }
-
-      .component-switches[hidden] {
-        display: none;
-      }
-
-      .component-switches-title {
-        grid-column: 1 / -1;
-        color: #475569;
-        font-size: 11px;
-        font-weight: 700;
-      }
-
-      .component-switch-option {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        min-width: 0;
-        cursor: pointer;
-        font-size: 12px;
-        user-select: none;
-      }
-
-      .component-switch-option input {
-        flex: 0 0 auto;
-        margin: 0;
-      }
-
-      .component-switch-option span {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
       .content {
         grid-row: 3;
         position: relative;
@@ -575,6 +571,7 @@
         height: 100%;
         border: 0;
         background: transparent;
+        color-scheme: inherit;
       }
 
       .offline {
@@ -654,7 +651,6 @@
 
       #${PANEL_ID}[data-display-mode="fullscreen"] .toolbar,
       #${PANEL_ID}[data-display-mode="fullscreen"] .routes,
-      #${PANEL_ID}[data-display-mode="fullscreen"] .component-switches,
       #${PANEL_ID}[data-display-mode="fullscreen"] .resize,
       #${PANEL_ID}[data-display-mode="fullscreen"] .offline {
         display: none !important;
@@ -760,7 +756,6 @@
       <nav class="actions" aria-label="浮窗操作">
         <button type="button" data-action="reload" title="刷新 WebUI" aria-label="刷新 WebUI">↻</button>
         <button type="button" data-action="routes" title="入口" aria-label="入口">☰</button>
-        <button type="button" data-action="components" title="组件开关" aria-label="组件开关">▦</button>
         <button type="button" data-action="open" title="打开完整页面" aria-label="打开完整页面">↗</button>
         <button type="button" data-action="minimize" title="最小化" aria-label="最小化">−</button>
         <button type="button" data-action="close" title="关闭" aria-label="关闭">×</button>
@@ -781,22 +776,6 @@
     `;
     routesEl = routesContainer;
 
-    const componentSwitches = document.createElement('div');
-    componentSwitches.className = 'component-switches';
-    componentSwitches.dataset.components = '';
-    componentSwitches.hidden = true;
-    componentSwitches.innerHTML = `
-      <div class="component-switches-title">界面组件</div>
-      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="avatar"><span>模型</span></label>
-      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="chat"><span>聊天框</span></label>
-      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="subtitle"><span>字幕</span></label>
-      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="controls"><span>模型按钮</span></label>
-      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="agent-hud"><span>任务 HUD</span></label>
-      <label class="component-switch-option"><input type="checkbox" data-floating-surface-component="status"><span>状态提示</span></label>
-    `;
-    componentsEl = componentSwitches;
-    syncSurfaceComponentControls();
-
     const contentEl = document.createElement('main');
     contentEl.className = 'content';
     contentEl.innerHTML = `
@@ -809,12 +788,14 @@
       ></iframe>
       <div class="offline" data-offline hidden>
         <strong>N.E.K.O WebUI 未连接</strong>
-        <span>确认本地服务已运行在 http://localhost:48911/</span>
+        <span data-offline-message></span>
         <button type="button" data-action="retry">重试</button>
       </div>
     `;
     frame = contentEl.querySelector('#' + FRAME_ID);
     offlineEl = contentEl.querySelector('[data-offline]');
+    offlineMessageEl = contentEl.querySelector('[data-offline-message]');
+    updateOfflineMessage();
     statusDot = toolbarEl.querySelector('[data-status]');
 
     const resizeE = document.createElement('div');
@@ -827,13 +808,14 @@
     resizeSE.className = 'resize resize-se';
     resizeSE.dataset.resize = 'se';
 
-    panel.append(wakeButton, toolbar, routesContainer, componentSwitches, contentEl, resizeE, resizeS, resizeSE);
+    panel.append(wakeButton, toolbar, routesContainer, contentEl, resizeE, resizeS, resizeSE);
     shadow.append(style, panel);
 
     bindToolbarDrag(toolbar);
     bindResize([resizeE, resizeS, resizeSE]);
     bindActions();
     frame.addEventListener('load', onWebuiLoad);
+    syncFrameColorScheme();
   }
 
   function bindActions() {
@@ -845,12 +827,6 @@
       }
       if (routeButton) {
         openRoute(routeButton.dataset.route);
-      }
-    });
-    shadow.addEventListener('change', (event) => {
-      const componentInput = event.target.closest('[data-floating-surface-component]');
-      if (componentInput) {
-        updateSurfaceComponentsFromFloatingPanel();
       }
     });
   }
@@ -871,12 +847,6 @@
 
     if (action === 'routes') {
       setRoutesOpen(routesEl?.hidden === true);
-      scheduleWebuiReflow();
-      return;
-    }
-
-    if (action === 'components') {
-      setComponentsOpen(componentsEl?.hidden === true);
       scheduleWebuiReflow();
       return;
     }
@@ -908,59 +878,6 @@
     }
     routesEl.hidden = !open;
     panel.dataset.routesOpen = String(open);
-    if (open && componentsEl) {
-      componentsEl.hidden = true;
-      panel.dataset.componentsOpen = 'false';
-    }
-  }
-
-  function setComponentsOpen(open) {
-    if (!componentsEl || !panel) {
-      return;
-    }
-    componentsEl.hidden = !open;
-    panel.dataset.componentsOpen = String(open);
-    if (open && routesEl) {
-      routesEl.hidden = true;
-      panel.dataset.routesOpen = 'false';
-    }
-    syncSurfaceComponentControls();
-  }
-
-  function syncSurfaceComponentControls() {
-    if (!componentsEl) {
-      return;
-    }
-    const selected = new Set(surfaceComponents);
-    componentsEl.querySelectorAll('[data-floating-surface-component]').forEach((input) => {
-      input.checked = selected.has(input.dataset.floatingSurfaceComponent);
-    });
-  }
-
-  function updateSurfaceComponentsFromFloatingPanel() {
-    if (!componentsEl) {
-      return;
-    }
-    const previous = surfaceComponents.slice();
-    const next = EMBED_SURFACE_COMPONENT_ORDER.filter((component) => {
-      const input = componentsEl.querySelector(`[data-floating-surface-component="${component}"]`);
-      return input?.checked === true;
-    });
-    applySurfaceComponents(next);
-    chrome.runtime.sendMessage({
-      type: 'NEKO_SET_SURFACE_COMPONENTS',
-      surfaceComponents: next
-    }).then((response) => {
-      if (response?.ok === false) {
-        applySurfaceComponents(previous);
-        return;
-      }
-      if (Array.isArray(response?.surfaceComponents)) {
-        applySurfaceComponents(response.surfaceComponents);
-      }
-    }).catch(() => {
-      applySurfaceComponents(previous);
-    });
   }
 
   function openRoute(path) {
@@ -1030,6 +947,7 @@
   }
 
   function setOnline(online) {
+    updateOfflineMessage();
     if (!statusDot) {
       return;
     }
@@ -1048,6 +966,7 @@
     if (!frame) {
       return;
     }
+    syncFrameColorScheme();
     const target = getFrameTargetUrl();
     try {
       const current = frame.src;
@@ -1332,8 +1251,8 @@
     wakeButton = null;
     toolbar = null;
     routesEl = null;
-    componentsEl = null;
     offlineEl = null;
+    offlineMessageEl = null;
     statusDot = null;
     dragSession = null;
     resizeSession = null;
@@ -1633,6 +1552,46 @@
     return nextHost;
   }
 
+  function resolveEmbeddingColorScheme() {
+    const candidates = [document.documentElement, document.body]
+      .filter(Boolean)
+      .map((element) => {
+        try {
+          return String(getComputedStyle(element).colorScheme || '').trim().toLowerCase();
+        } catch {
+          return '';
+        }
+      });
+    const declared = candidates.find((value) => value && value !== 'normal') || 'normal';
+    const supportsLight = /(?:^|\s)light(?:\s|$)/.test(declared);
+    const supportsDark = /(?:^|\s)dark(?:\s|$)/.test(declared);
+
+    if (supportsDark && !supportsLight) {
+      return 'dark';
+    }
+    if (supportsLight && !supportsDark) {
+      return 'light';
+    }
+    if (supportsLight && supportsDark) {
+      return embeddingColorSchemeMedia?.matches === true ? 'dark' : 'light';
+    }
+
+    // `normal` means the page did not opt in to dark browser surfaces. Even
+    // under a dark OS preference its document canvas is therefore light.
+    return 'light';
+  }
+
+  function syncFrameColorScheme() {
+    const scheme = resolveEmbeddingColorScheme();
+    host?.style.setProperty('color-scheme', scheme);
+    panel?.style.setProperty('color-scheme', scheme);
+    if (frame) {
+      frame.style.setProperty('color-scheme', scheme);
+      frame.dataset.nekoEmbeddingColorScheme = scheme;
+    }
+    return scheme;
+  }
+
   function applyPanelMessage(message) {
     if (message.closed) {
       closePanel();
@@ -1760,7 +1719,6 @@
   function applySurfaceComponents(value) {
     const next = normalizeSurfaceComponents(value);
     surfaceComponents = next;
-    syncSurfaceComponentControls();
     if (isEmbeddedSurfaceActive() && embedReady) {
       postEmbedMessage({
         type: 'NEKO_EMBED_SET_COMPONENTS',
@@ -1783,18 +1741,45 @@
     return chatSurfaceMode;
   }
 
-  function canInjectHere() {
-    const url = location.href;
-    if (!/^https?:\/\//i.test(url)) {
-      return false;
+  function applyWebuiUrl(value) {
+    const nextUrl = normalizeNekoUrl(value);
+    if (!nextUrl) {
+      return null;
     }
-    return !/^https?:\/\/(?:localhost|127\.0\.0\.1):48911(?:\/|$)/i.test(url);
+    if (nextUrl === webuiUrl) {
+      return webuiUrl;
+    }
+    webuiUrl = nextUrl;
+    stopAllPcmRelays();
+    updateOfflineMessage();
+    setOnline(null);
+    if (isConfiguredFrontendPage(location.href, webuiUrl)) {
+      closePanel();
+      return webuiUrl;
+    }
+    if (panel && !panel.hidden && panel.dataset.minimized !== 'true') {
+      unloadFrame();
+      ensureFrameLoaded();
+      checkHealth();
+    }
+    return webuiUrl;
+  }
+
+  function updateOfflineMessage() {
+    if (offlineMessageEl) {
+      offlineMessageEl.textContent = `确认前端服务可通过 ${webuiUrl} 访问`;
+    }
+  }
+
+  function canInjectHere() {
+    return /^https?:\/\//i.test(location.href);
   }
 
   function getState() {
     return chrome.runtime.sendMessage({ type: 'NEKO_GET_STATE' }).then((stored) => ({
       ...DEFAULT_STATE,
       ...stored,
+      webuiUrl: normalizeNekoUrl(stored?.webuiUrl) || DEFAULT_STATE.webuiUrl,
       surfaceComponents: normalizeSurfaceComponents(stored?.surfaceComponents),
       chatSurfaceMode: normalizeChatSurfaceMode(stored?.chatSurfaceMode),
       panel: {
@@ -1973,15 +1958,22 @@
 
   function normalizeNekoUrl(url) {
     try {
-      const parsed = new URL(url);
-      const allowedHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-      if (allowedHost && parsed.protocol === 'http:' && parsed.port === '48911') {
-        return parsed.toString();
-      }
-    } catch {
-      return null;
-    }
+      const parsed = new URL(url || DEFAULT_STATE.webuiUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+      if (!parsed.hostname || parsed.username || parsed.password) return null;
+      return parsed.toString();
+    } catch {}
     return null;
+  }
+
+  function isConfiguredFrontendPage(pageUrl, frontendUrl) {
+    try {
+      return new URL(pageUrl).origin === new URL(
+        normalizeNekoUrl(frontendUrl) || DEFAULT_STATE.webuiUrl
+      ).origin;
+    } catch {
+      return false;
+    }
   }
 
   function clampNumber(value, min, max) {

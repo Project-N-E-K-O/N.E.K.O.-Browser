@@ -204,7 +204,7 @@
     }
     if (online === false) {
       statusDot.dataset.state = 'offline';
-      offlineMessage.textContent = `确认本地服务已运行在 ${webuiUrl}`;
+      offlineMessage.textContent = `确认前端服务可通过 ${webuiUrl} 访问`;
       offlineEl.hidden = false;
       return;
     }
@@ -226,10 +226,9 @@
   function normalizeNekoUrl(url) {
     try {
       const parsed = new URL(url || DEFAULT_WEBUI_URL);
-      const allowedHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-      if (allowedHost && parsed.protocol === 'http:' && parsed.port === '48911') {
-        return parsed.toString();
-      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+      if (!parsed.hostname || parsed.username || parsed.password) return null;
+      return parsed.toString();
     } catch {}
     return null;
   }

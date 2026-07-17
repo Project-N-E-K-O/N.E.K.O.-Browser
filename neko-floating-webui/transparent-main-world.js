@@ -1,11 +1,16 @@
 (function () {
-  if (window.top === window || window.__nekoFloatingTransparentMainWorld) {
+  const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
+  const isNativeSidePanel = window.name === 'neko-native-sidepanel';
+  if (
+    window.top === window
+    || (!isEmbeddedSurface && !isNativeSidePanel)
+    || window.__nekoFloatingTransparentMainWorld
+  ) {
     return;
   }
 
   window.__nekoFloatingTransparentMainWorld = true;
   document.documentElement.dataset.nekoFloatingTransparentMainWorld = 'enabled';
-  const isNativeSidePanel = window.name === 'neko-native-sidepanel';
   if (isNativeSidePanel) {
     document.documentElement.dataset.nekoNativeSidePanel = 'enabled';
   }

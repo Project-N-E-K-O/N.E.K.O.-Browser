@@ -1,5 +1,7 @@
 (function () {
-  if (window.top === window) {
+  const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
+  const isNativeSidePanel = window.name === 'neko-native-sidepanel';
+  if (window.top === window || (!isEmbeddedSurface && !isNativeSidePanel)) {
     return;
   }
 
@@ -13,6 +15,7 @@
     document.documentElement.dataset.nekoFloatingTransparent = 'enabled';
     document.documentElement.style.setProperty('background', 'transparent', 'important');
     document.documentElement.style.setProperty('background-color', 'transparent', 'important');
+    document.documentElement.style.setProperty('color-scheme', 'light dark', 'important');
 
     if (document.body) {
       document.body.classList.add(TRANSPARENT_CLASS);
@@ -105,6 +108,10 @@
         background-color: transparent !important;
       }
 
+      html.${TRANSPARENT_CLASS} {
+        color-scheme: light dark !important;
+      }
+
       @media only screen and (max-width: 768px) {
         html.${TRANSPARENT_CLASS},
         html.${TRANSPARENT_CLASS}:not(.lanlan-pet-mode),
@@ -119,8 +126,11 @@
         }
       }
 
+      html.${TRANSPARENT_CLASS}::before,
+      html.${TRANSPARENT_CLASS}::after,
       html.${TRANSPARENT_CLASS} body::before,
-      html.${TRANSPARENT_CLASS} body::after {
+      html.${TRANSPARENT_CLASS} body::after,
+      html.${TRANSPARENT_CLASS} #react-chat-window-overlay {
         background: transparent !important;
         background-color: transparent !important;
       }

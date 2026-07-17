@@ -60,6 +60,20 @@ test('fullscreen iframe is click-through until an interactive region is selected
   );
 });
 
+test('embedded iframe inherits the page color scheme to preserve dark-page transparency', () => {
+  assert.match(source, /:host\s*\{[\s\S]*?color-scheme:\s*inherit/);
+  assert.match(source, /#\$\{FRAME_ID\}\s*\{[\s\S]*?color-scheme:\s*inherit/);
+  const resolveBlock = functionBlock('resolveEmbeddingColorScheme', 'syncFrameColorScheme');
+  assert.match(resolveBlock, /getComputedStyle\(element\)\.colorScheme/);
+  assert.match(resolveBlock, /value !== 'normal'/);
+  assert.match(resolveBlock, /return 'light';/);
+  const syncBlock = functionBlock('syncFrameColorScheme', 'applyPanelMessage');
+  assert.match(syncBlock, /host\?\.style\.setProperty\('color-scheme', scheme\)/);
+  assert.match(syncBlock, /frame\.style\.setProperty\('color-scheme', scheme\)/);
+  assert.match(source, /embeddingColorSchemeMedia\?\.addEventListener\('change', syncFrameColorScheme\)/);
+  assert.match(source, /new MutationObserver\(syncFrameColorScheme\)/);
+});
+
 test('embedded pointer relay locks interaction for the full drag lifetime', () => {
   const block = functionBlock('handleEmbeddedPointer', 'createHost');
   assert.match(block, /phase === 'down'[\s\S]*?embedPointerLock = pointerId/);

@@ -36,14 +36,11 @@ test('background normalizes, stores, and forwards component state', () => {
   assert.match(background, /return SURFACE_COMPONENT_ORDER\.filter/);
 });
 
-test('floating toolbar exposes and persists the same component switches', () => {
-  assert.match(content, /data-action="components"/);
-  for (const component of components) {
-    assert.match(content, new RegExp(`data-floating-surface-component="${component}"`));
-  }
-  assert.match(content, /function updateSurfaceComponentsFromFloatingPanel/);
-  assert.match(content, /type: 'NEKO_SET_SURFACE_COMPONENTS'/);
-  assert.match(content, /function syncSurfaceComponentControls/);
+test('component switches live only in the popup instead of the floating toolbar', () => {
+  assert.doesNotMatch(content, /data-action="components"/);
+  assert.doesNotMatch(content, /data-floating-surface-component/);
+  assert.doesNotMatch(content, /function updateSurfaceComponentsFromFloatingPanel/);
+  assert.match(content, /message\.type === 'NEKO_APPLY_SURFACE_COMPONENTS'/);
 });
 
 test('popup can persist a fixed compact or full chat surface mode', () => {

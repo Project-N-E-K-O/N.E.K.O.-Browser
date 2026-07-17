@@ -9,11 +9,11 @@ const adapter = read('embedded-surface-main-world.js');
 const css = read('embedded-surface.css');
 
 test('the extension owns and injects the embedded surface adapter', () => {
-  const localScripts = manifest.content_scripts.filter((entry) => (
-    entry.matches.includes('http://localhost:48911/*')
+  const webScripts = manifest.content_scripts.filter((entry) => (
+    entry.matches.includes('http://*/*') && entry.matches.includes('https://*/*')
   ));
-  const isolated = localScripts.find((entry) => entry.js?.includes('transparent-page.js'));
-  const mainWorld = localScripts.find((entry) => entry.world === 'MAIN');
+  const isolated = webScripts.find((entry) => entry.js?.includes('transparent-page.js'));
+  const mainWorld = webScripts.find((entry) => entry.world === 'MAIN');
 
   assert.ok(isolated?.css?.includes('embedded-surface.css'));
   assert.ok(mainWorld?.js?.includes('embedded-surface-main-world.js'));

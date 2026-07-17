@@ -57,6 +57,7 @@ chrome.runtime.onInstalled.addListener(async () => {
     displayMode: normalizeDisplayMode(current.displayMode),
     surfaceComponents: normalizeSurfaceComponents(current.surfaceComponents),
     chatSurfaceMode: normalizeChatSurfaceMode(current.chatSurfaceMode),
+    webuiUrl: normalizeNekoUrl(current.webuiUrl) || DEFAULT_STATE.webuiUrl,
     panel: {
       ...DEFAULT_STATE.panel,
       ...(current.panel || {})
@@ -101,12 +102,14 @@ setTimeout(() => {
 }, 500);
 
 async function handleActionClick(tab) {
-  if (!tab || !tab.id || !isInjectableTab(tab.url)) {
+  if (!tab || !tab.id) {
+    return;
+  }
+  const state = await getStoredState();
+  if (!isInjectableTab(tab.url, state.webuiUrl)) {
     return;
   }
   panelSyncSeq += 1;
-
-  const state = await getStoredState();
   if (state.displayMode === 'sidebar') {
     return;
   }
@@ -171,7 +174,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   }
 
   const tab = await getTab(tabId);
-  if (!tab || !isInjectableTab(tab.url)) {
+  if (!tab || !isInjectableTab(tab.url, state.webuiUrl)) {
     await chrome.storage.local.set({ activeTabId: null, minimized: true });
   }
 });
@@ -193,6 +196,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'chatSurfaceMode')) {
       payload.chatSurfaceMode = normalizeChatSurfaceMode(payload.chatSurfaceMode);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'webuiUrl')) {
+      const webuiUrl = normalizeNekoUrl(payload.webuiUrl);
+      if (!webuiUrl) {
+        sendResponse({ ok: false, error: '前端地址必须是有效的 HTTP 或 HTTPS 地址。' });
+        return false;
+      }
+      payload.webuiUrl = webuiUrl;
     }
     if (typeof payload.minimized === 'boolean') {
       payload.wakeStateInitialized = true;
@@ -221,6 +232,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'NEKO_SET_WEBUI_URL') {
+    setWebuiUrl(message.webuiUrl)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
   if (message.type === 'NEKO_OPEN_TAB') {
     const url = normalizeNekoUrl(message.url);
     if (url) {
@@ -238,7 +256,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
-      if (tab && isInjectableTab(tab.url)) {
+      if (tab && isInjectableTab(tab.url, state.webuiUrl)) {
         await handleActionClick(tab);
       }
       sendResponse({ ok: true });
@@ -445,7 +463,7 @@ async function setDisplayMode(mode) {
   }
 
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
-  if (!tab?.id || !isInjectableTab(tab.url)) {
+  if (!tab?.id || !isInjectableTab(tab.url, previous.webuiUrl)) {
     return { ok: true, mode, transferred: false };
   }
 
@@ -604,7 +622,7 @@ async function autoAttachPanel(tabId) {
     };
   }
 
-  if (state.minimized === false && tab?.active && isInjectableTab(tab.url)) {
+  if (state.minimized === false && tab?.active && isInjectableTab(tab.url, state.webuiUrl)) {
     await activatePanelInTab(tabId);
     return {
       ok: true,
@@ -647,7 +665,7 @@ async function syncPanelToTab(tabId, syncSeq) {
     return { ok: true, minimized: true, awake: false };
   }
   const tab = await getTab(tabId);
-  if (!tab || !isInjectableTab(tab.url)) {
+  if (!tab || !isInjectableTab(tab.url, state.webuiUrl)) {
     await enforceSingleActivePanel(null);
     await chrome.storage.local.set({ activeTabId: null });
     return { ok: false, awake: false };
@@ -767,7 +785,7 @@ async function sweepPanelSingleton() {
   let activeTabId = await getLiveActiveTabId(state);
   if (!activeTabId) {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
-    if (tab?.id && isInjectableTab(tab.url)) {
+    if (tab?.id && isInjectableTab(tab.url, state.webuiUrl)) {
       activeTabId = tab.id;
       await chrome.storage.local.set({ activeTabId: tab.id });
     } else {
@@ -806,6 +824,7 @@ async function getStoredState() {
     displayMode: normalizeDisplayMode(stored.displayMode),
     surfaceComponents: normalizeSurfaceComponents(stored.surfaceComponents),
     chatSurfaceMode: normalizeChatSurfaceMode(stored.chatSurfaceMode),
+    webuiUrl: normalizeNekoUrl(stored.webuiUrl) || DEFAULT_STATE.webuiUrl,
     activeSidePanelWindowId: normalizeWindowId(stored.activeSidePanelWindowId),
     panel: {
       ...DEFAULT_STATE.panel,
@@ -844,6 +863,30 @@ async function setChatSurfaceMode(value) {
   return { ok: true, chatSurfaceMode };
 }
 
+async function setWebuiUrl(value) {
+  const webuiUrl = normalizeNekoUrl(value);
+  if (!webuiUrl) {
+    throw new Error('前端地址必须是有效的 HTTP 或 HTTPS 地址。');
+  }
+  const state = await getStoredState();
+  await chrome.storage.local.set({ webuiUrl });
+
+  const activeTabId = await getLiveActiveTabId(state);
+  if (activeTabId !== null) {
+    const activeTab = await getTab(activeTabId);
+    if (!isInjectableTab(activeTab?.url, webuiUrl)) {
+      await sendTabMessage(activeTabId, { type: 'NEKO_FORCE_CLOSE' });
+      await chrome.storage.local.set({ activeTabId: null, minimized: true });
+    } else {
+      await sendTabMessage(activeTabId, {
+        type: 'NEKO_APPLY_WEBUI_URL',
+        webuiUrl
+      });
+    }
+  }
+  return { ok: true, webuiUrl };
+}
+
 async function getLiveActiveTabId(state) {
   const activeTabId = Number.isInteger(state.activeTabId) ? state.activeTabId : null;
   if (!activeTabId) {
@@ -859,12 +902,18 @@ async function getLiveActiveTabId(state) {
   }
 }
 
-function isInjectableTab(url) {
+function isInjectableTab(url, webuiUrl) {
   if (!url) {
     return false;
   }
-
-  return /^https?:\/\//i.test(url) && !/^https?:\/\/(?:localhost|127\.0\.0\.1):48911(?:\/|$)/i.test(url);
+  try {
+    const page = new URL(url);
+    const frontend = new URL(normalizeNekoUrl(webuiUrl) || DEFAULT_STATE.webuiUrl);
+    return (page.protocol === 'http:' || page.protocol === 'https:')
+      && page.origin !== frontend.origin;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeDisplayMode(mode) {
@@ -902,15 +951,12 @@ function isNekoSidePanelPath(path) {
 function normalizeNekoUrl(url) {
   try {
     const parsed = new URL(url || DEFAULT_STATE.webuiUrl);
-    const allowedHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-    if (allowedHost && parsed.protocol === 'http:' && parsed.port === '48911') {
-      return parsed.toString();
-    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.hostname || parsed.username || parsed.password) return null;
+    return parsed.toString();
   } catch {
     return null;
   }
-
-  return null;
 }
 
 async function performHealthCheck() {

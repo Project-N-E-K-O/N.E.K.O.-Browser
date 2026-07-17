@@ -7,6 +7,22 @@ body.neko-floating-webui-transparent:not(.lanlan-pet-mode):not(.electron-chat-wi
   background-color: transparent !important;
 }
 
+html.neko-floating-webui-transparent {
+  /* A transparent embedded document must advertise support for the used
+     scheme inherited through its iframe, otherwise Chromium supplies an
+     opaque canvas when the embedding page is dark. */
+  color-scheme: light dark !important;
+}
+
+html.neko-floating-webui-transparent::before,
+html.neko-floating-webui-transparent::after,
+html.neko-floating-webui-transparent body::before,
+html.neko-floating-webui-transparent body::after,
+html.neko-floating-webui-transparent #react-chat-window-overlay {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 @media only screen and (max-width: 768px) {
   html.neko-floating-webui-transparent,
   html.neko-floating-webui-transparent:not(.lanlan-pet-mode),

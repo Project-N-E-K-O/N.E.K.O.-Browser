@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>N.E.K.O 麦克风授权</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      color: #0f172a;
+      background: #f1f5f9;
+    }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    main {
+      width: min(100%, 480px);
+      box-sizing: border-box;
+      padding: 28px;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+    }
+    h1 { margin: 0; font-size: 22px; }
+    .lead {
+      margin: 12px 0 20px;
+      color: #475569;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .status {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .status[data-state="granted"] { background: #ecfdf5; color: #166534; }
+    .status[data-state="denied"],
+    .status[data-state="error"] { background: #fef2f2; color: #991b1b; }
+    .actions { display: grid; gap: 10px; }
+    button {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 8px;
+      background: #ffffff;
+      color: #0f172a;
+      cursor: pointer;
+      font: 600 14px Inter, "Segoe UI", Arial, sans-serif;
+    }
+    button.primary { border-color: #4f46e5; background: #4f46e5; color: #ffffff; }
+    button.primary:hover { background: #4338ca; }
+    button:hover { background: #f8fafc; }
+    button:disabled { cursor: wait; opacity: .55; }
+    .footnote {
+      margin: 16px 0 0;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    code { user-select: all; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>N.E.K.O 麦克风授权</h1>
+    <p class="lead">此页面属于扩展自身，不会把麦克风权限授予当前浏览的网页。点击下方按钮后，请在浏览器提示中选择“允许”。</p>
+    <p class="status" id="permission-status" data-state="unknown" role="status">正在检查麦克风权限…</p>
+    <div class="actions">
+      <button type="button" class="primary" id="request-microphone">请求麦克风权限</button>
+      <button type="button" id="open-microphone-settings">打开浏览器麦克风设置</button>
+      <button type="button" id="close-page">关闭此页面</button>
+    </div>
+    <p class="footnote">若浏览器不再弹出提示，通常表示权限已经被阻止。请在麦克风设置中解除对扩展的阻止，再回到此页重试。扩展来源：<code id="extension-origin"></code></p>
+  </main>
+  <script src="mic-permission.js"></script>
+</body>
+</html>

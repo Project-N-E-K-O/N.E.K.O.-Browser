@@ -19,8 +19,11 @@ html.neko-embedded-surface body:not(.electron-chat-window) {
     background-color: transparent !important;
 }
 
+html.neko-embedded-surface::before,
+html.neko-embedded-surface::after,
 html.neko-embedded-surface body::before,
-html.neko-embedded-surface body::after {
+html.neko-embedded-surface body::after,
+html.neko-embedded-surface #react-chat-window-overlay {
     background: transparent !important;
     background-color: transparent !important;
 }

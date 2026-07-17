@@ -1,4 +1,5 @@
 (() => {
+  const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
   const modeButtons = document.querySelectorAll('.modes button');
   const toggleButton = document.getElementById('toggle');
   const hintEl = document.getElementById('hint');
@@ -6,11 +7,19 @@
   const componentsHintEl = document.getElementById('components-hint');
   const chatSurfaceModeEl = document.getElementById('chat-surface-mode');
   const chatModeHintEl = document.getElementById('chat-mode-hint');
+  const webuiUrlEl = document.getElementById('webui-url');
+  const saveWebuiUrlButton = document.getElementById('save-webui-url');
+  const resetWebuiUrlButton = document.getElementById('reset-webui-url');
+  const authorizeMicrophoneButton = document.getElementById('authorize-microphone');
+  const microphonePermissionHintEl = document.getElementById('microphone-permission-hint');
   const componentInputs = document.querySelectorAll('[data-surface-component]');
   const componentOrder = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
   let currentMode = 'floating';
   let currentComponents = componentOrder.slice();
   let currentChatSurfaceMode = 'auto';
+  let currentWebuiUrl = DEFAULT_WEBUI_URL;
+  let microphonePermissionState = 'unknown';
+  let microphonePermissionStatus = null;
   let currentWindowId = null;
   let activeSidePanelWindowId = null;
 
@@ -25,6 +34,7 @@
       currentMode = normalizeDisplayMode(state?.displayMode);
       currentComponents = normalizeSurfaceComponents(state?.surfaceComponents);
       currentChatSurfaceMode = normalizeChatSurfaceMode(state?.chatSurfaceMode);
+      currentWebuiUrl = normalizeWebuiUrl(state?.webuiUrl) || DEFAULT_WEBUI_URL;
       currentWindowId = Number(currentWindow?.id);
       activeSidePanelWindowId = state?.activeSidePanelWindowId !== null
         && state?.activeSidePanelWindowId !== undefined
@@ -33,6 +43,7 @@
         : null;
       render();
       setControlsDisabled(false);
+      refreshMicrophonePermissionState();
     } catch (error) {
       currentMode = 'floating';
       showError(error);
@@ -44,6 +55,9 @@
       btn.classList.toggle('active', btn.dataset.mode === currentMode);
     });
     const selected = new Set(currentComponents);
+    if (document.activeElement !== webuiUrlEl) {
+      webuiUrlEl.value = currentWebuiUrl;
+    }
     chatSurfaceModeEl.value = currentChatSurfaceMode;
     componentInputs.forEach((input) => {
       input.checked = selected.has(input.dataset.surfaceComponent);
@@ -119,6 +133,34 @@
     }
   });
 
+  saveWebuiUrlButton.addEventListener('click', () => {
+    saveWebuiUrl(webuiUrlEl.value);
+  });
+
+  resetWebuiUrlButton.addEventListener('click', () => {
+    saveWebuiUrl(DEFAULT_WEBUI_URL);
+  });
+
+  webuiUrlEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveWebuiUrl(webuiUrlEl.value);
+    }
+  });
+
+  authorizeMicrophoneButton.addEventListener('click', async () => {
+    clearError();
+    setControlsDisabled(true);
+    try {
+      await chrome.tabs.create({
+        url: chrome.runtime.getURL('mic-permission.html')
+      });
+      window.close();
+    } catch (error) {
+      showError(error);
+    }
+  });
+
   componentInputs.forEach((input) => {
     input.addEventListener('change', async () => {
       clearError();
@@ -165,6 +207,29 @@
     setControlsDisabled(false);
   });
 
+  async function saveWebuiUrl(value) {
+    clearError();
+    const nextUrl = normalizeWebuiUrl(value);
+    if (!nextUrl) {
+      showError(new Error('请输入有效的 HTTP 或 HTTPS 前端地址。'));
+      return;
+    }
+    setControlsDisabled(true);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'NEKO_SET_WEBUI_URL',
+        webuiUrl: nextUrl
+      });
+      assertOk(response);
+      currentWebuiUrl = normalizeWebuiUrl(response?.webuiUrl) || nextUrl;
+      webuiUrlEl.value = currentWebuiUrl;
+    } catch (error) {
+      showError(error);
+      return;
+    }
+    setControlsDisabled(false);
+  }
+
   function normalizeDisplayMode(mode) {
     if (mode === 'fullscreen' || mode === 'sidebar') {
       return mode;
@@ -185,6 +250,62 @@
     return normalized === 'compact' || normalized === 'full' ? normalized : 'auto';
   }
 
+  function normalizeWebuiUrl(value) {
+    try {
+      let candidate = String(value || '').trim();
+      if (!candidate) return null;
+      if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate)) {
+        candidate = `http://${candidate}`;
+      }
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+      if (!parsed.hostname || parsed.username || parsed.password) return null;
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  async function refreshMicrophonePermissionState(options = {}) {
+    if (!navigator.permissions?.query) {
+      if (microphonePermissionState === 'unknown') {
+        renderMicrophonePermissionState();
+      }
+      return;
+    }
+    try {
+      microphonePermissionStatus = await navigator.permissions.query({ name: 'microphone' });
+      microphonePermissionState = microphonePermissionStatus.state;
+      microphonePermissionStatus.onchange = () => {
+        microphonePermissionState = microphonePermissionStatus.state;
+        renderMicrophonePermissionState();
+      };
+    } catch {
+      if (microphonePermissionState === 'unknown') {
+        microphonePermissionState = 'prompt';
+      }
+    }
+    renderMicrophonePermissionState(options);
+  }
+
+  function renderMicrophonePermissionState(options = {}) {
+    authorizeMicrophoneButton.dataset.state = microphonePermissionState;
+    if (microphonePermissionState === 'granted') {
+      authorizeMicrophoneButton.textContent = '麦克风已授权';
+      microphonePermissionHintEl.textContent = '授权有效。浮窗和全屏可通过扩展后台获取麦克风。';
+      return;
+    }
+    if (microphonePermissionState === 'denied') {
+      authorizeMicrophoneButton.textContent = '重新授权麦克风';
+      microphonePermissionHintEl.textContent = '麦克风已被阻止，请先在浏览器设置中解除阻止后再点击。';
+      return;
+    }
+    authorizeMicrophoneButton.textContent = '授权麦克风';
+    if (!options.preserveError) {
+      microphonePermissionHintEl.textContent = '点击后会打开独立授权页，用于浮窗和全屏的扩展麦克风中继。';
+    }
+  }
+
   function setControlsDisabled(disabled) {
     modeButtons.forEach((button) => {
       button.disabled = disabled;
@@ -194,6 +315,10 @@
       input.disabled = disabled;
     });
     chatSurfaceModeEl.disabled = disabled;
+    webuiUrlEl.disabled = disabled;
+    saveWebuiUrlButton.disabled = disabled;
+    resetWebuiUrlButton.disabled = disabled;
+    authorizeMicrophoneButton.disabled = disabled;
   }
 
   function assertOk(response) {
