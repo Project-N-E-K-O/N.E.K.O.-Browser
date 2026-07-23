@@ -64,7 +64,8 @@ test('panel hover uses a stationary zone instead of its shifted bounds', () => {
 
 test('popup uses a compact single-row title bar', () => {
   assert.match(popupHtml, /<header class="hero">/);
-  assert.match(popupHtml, /<h1>浏览器伴侣<\/h1>/);
+  assert.match(popupHtml, /<title>Project N\.E\.K\.O\. 猫娘菜单<\/title>/);
+  assert.match(popupHtml, /<h1>猫娘菜单<\/h1>/);
   assert.match(popupHtml, /<div class="hero-meta" title="WebUI 快捷控制">/);
   assert.doesNotMatch(popupHtml, /hero-logo|hero-paws|hero-badge/);
   assert.match(popupCss, /\.hero \{[\s\S]*display: flex;[\s\S]*min-height: 54px;/);
