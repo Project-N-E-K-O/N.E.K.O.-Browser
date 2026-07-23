@@ -7,6 +7,7 @@ const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
 const background = read('background.js');
 const popupHtml = read('popup.html');
 const popup = read('popup.js');
+const popupCss = read('popup.css');
 const content = read('content.js');
 
 const components = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
@@ -26,6 +27,51 @@ test('popup persists component changes without closing itself', () => {
   assert.match(popup, /currentComponents = normalizeSurfaceComponents/);
   assert.match(popup, /当前浮窗页面/);
   assert.match(popup, /当前全屏页面/);
+});
+
+test('display mode selector slides its indicator and stays open after switching', () => {
+  assert.match(popupHtml, /class="modes" data-active-mode="floating"/);
+  assert.match(popupHtml, /class="modes-indicator"/);
+  assert.match(popup, /modesEl\.dataset\.activeMode = currentMode/);
+  assert.match(popupCss, /\.modes\.is-ready \.modes-indicator/);
+  assert.match(popupCss, /translateX\(calc\(200% \+ 8px\)\)/);
+
+  const modeClickMarker = popup.indexOf("btn.addEventListener('click'");
+  const modeHandlerStart = popup.lastIndexOf('modeButtons.forEach', modeClickMarker);
+  const modeHandlerEnd = popup.indexOf("toggleButton.addEventListener", modeHandlerStart);
+  const modeHandler = popup.slice(modeHandlerStart, modeHandlerEnd);
+  assert.ok(modeClickMarker >= 0 && modeHandlerStart >= 0 && modeHandlerEnd > modeHandlerStart);
+  assert.match(modeHandler, /currentMode = mode/);
+  assert.doesNotMatch(modeHandler, /window\.close\(\)/);
+});
+
+test('feature panels use a simple hover lift on fine pointers', () => {
+  assert.match(popup, /setupPanelHover\(\)/);
+  assert.match(popup, /matchMedia\('\(hover: hover\) and \(pointer: fine\)'\)/);
+  assert.match(popupCss, /@media \(hover: hover\) and \(pointer: fine\)/);
+  assert.match(popupCss, /\.section-hover-zone:hover \.section/);
+  assert.match(popupCss, /--panel-lift: -3px/);
+  assert.match(popupCss, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(popupCss, /rotate[XY]\(|perspective\(/);
+  assert.doesNotMatch(popup, /pointermove|--panel-rotate/);
+});
+
+test('panel hover uses a stationary zone instead of its shifted bounds', () => {
+  assert.match(popup, /hoverZone\.className = 'section-hover-zone'/);
+  assert.match(popup, /section\.parentNode\.insertBefore\(hoverZone, section\)/);
+  assert.match(popupCss, /\.section-hover-zone/);
+});
+
+test('popup uses a compact single-row title bar', () => {
+  assert.match(popupHtml, /<header class="hero">/);
+  assert.match(popupHtml, /<h1>浏览器伴侣<\/h1>/);
+  assert.match(popupHtml, /<div class="hero-meta" title="WebUI 快捷控制">/);
+  assert.doesNotMatch(popupHtml, /hero-logo|hero-paws|hero-badge/);
+  assert.match(popupCss, /\.hero \{[\s\S]*display: flex;[\s\S]*min-height: 54px;/);
+  assert.match(popupCss, /\.hero::before \{[\s\S]*url\("assets\/ui\/icon_systray\.ico"\)/);
+  assert.match(popupCss, /\.hero::before \{[\s\S]*opacity: 0\.52;/);
+  assert.doesNotMatch(popupCss, /\.hero-brand \{[^}]*margin-left:/);
+  assert.doesNotMatch(popupCss, /\.hero-logo|\.hero::after|\.hero-paws|\.hero-badge/);
 });
 
 test('background normalizes, stores, and forwards component state', () => {

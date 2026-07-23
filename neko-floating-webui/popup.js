@@ -1,6 +1,8 @@
 (() => {
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
+  const modesEl = document.querySelector('.modes');
   const modeButtons = document.querySelectorAll('.modes button');
+  const sectionEls = document.querySelectorAll('.section');
   const toggleButton = document.getElementById('toggle');
   const hintEl = document.getElementById('hint');
   const errorEl = document.getElementById('error');
@@ -22,7 +24,9 @@
   let microphonePermissionStatus = null;
   let currentWindowId = null;
   let activeSidePanelWindowId = null;
+  let modesReady = false;
 
+  setupPanelHover();
   setControlsDisabled(true);
 
   async function refresh() {
@@ -51,6 +55,11 @@
   }
 
   function render() {
+    modesEl.dataset.activeMode = currentMode;
+    if (!modesReady) {
+      modesReady = true;
+      requestAnimationFrame(() => modesEl.classList.add('is-ready'));
+    }
     modeButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === currentMode);
     });
@@ -86,6 +95,9 @@
     btn.addEventListener('click', async () => {
       const mode = normalizeDisplayMode(btn.dataset.mode);
       clearError();
+      modeButtons.forEach((button) => {
+        button.disabled = true;
+      });
       try {
         if (mode === 'sidebar') {
           const openPromise = chrome.sidePanel.open({ windowId: currentWindowId });
@@ -96,9 +108,15 @@
           const response = await chrome.runtime.sendMessage({ type: 'NEKO_SET_DISPLAY_MODE', mode });
           assertOk(response);
         }
-        window.close();
+        currentMode = mode;
+        activeSidePanelWindowId = mode === 'sidebar' ? currentWindowId : null;
+        render();
       } catch (error) {
         showError(error);
+      } finally {
+        modeButtons.forEach((button) => {
+          button.disabled = false;
+        });
       }
     });
   });
@@ -319,6 +337,21 @@
     saveWebuiUrlButton.disabled = disabled;
     resetWebuiUrlButton.disabled = disabled;
     authorizeMicrophoneButton.disabled = disabled;
+  }
+
+  function setupPanelHover() {
+    const supportsHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    const reducesMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!supportsHover || reducesMotion) {
+      return;
+    }
+
+    sectionEls.forEach((section) => {
+      const hoverZone = document.createElement('div');
+      hoverZone.className = 'section-hover-zone';
+      section.parentNode.insertBefore(hoverZone, section);
+      hoverZone.appendChild(section);
+    });
   }
 
   function assertOk(response) {
