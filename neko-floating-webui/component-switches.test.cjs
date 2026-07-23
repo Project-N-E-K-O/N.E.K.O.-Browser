@@ -108,3 +108,22 @@ test('popup can persist a fixed compact or full chat surface mode', () => {
   assert.match(content, /message\.type === 'NEKO_APPLY_CHAT_SURFACE_MODE'/);
   assert.match(content, /type: 'NEKO_EMBED_SET_CHAT_MODE'/);
 });
+
+test('chat surface mode uses a host-style custom dropdown over the native value control', () => {
+  assert.match(popupHtml, /class="setting-select is-enhanced" id="chat-surface-mode"/);
+  assert.match(popupHtml, /class="chat-mode-dropdown-trigger"/);
+  assert.match(popupHtml, /class="chat-mode-dropdown-menu"/);
+  assert.equal((popupHtml.match(/class="chat-mode-dropdown-option(?: selected)?"/g) || []).length, 3);
+  assert.match(popup, /setChatModeDropdownOpen/);
+  assert.match(popup, /syncChatModeDropdown/);
+  assert.match(popup, /aria-selected/);
+  assert.match(popup, /event\.key === 'ArrowDown'/);
+  assert.match(popup, /event\.key === 'Escape'/);
+  assert.match(popupCss, /\.chat-mode-dropdown-trigger/);
+  assert.match(popupCss, /\.chat-mode-dropdown\.open \{[\s\S]*z-index: 40;/);
+  assert.match(popupCss, /\.chat-mode-dropdown-option\.selected/);
+  assert.match(popupCss, /\.chat-mode-dropdown-menu \{[\s\S]*background: #fff;/);
+  assert.match(popupCss, /background: #19242f;/);
+  assert.doesNotMatch(popupCss, /\.chat-mode-dropdown-menu \{[\s\S]*?backdrop-filter:/);
+  assert.match(popupCss, /chat-mode-menu-enter/);
+});

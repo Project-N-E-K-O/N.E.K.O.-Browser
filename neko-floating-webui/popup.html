@@ -111,13 +111,49 @@
             <span>控制对话窗口的默认形态</span>
           </div>
         </div>
-        <div class="select-shell">
-          <img src="assets/ui/chat_icon.png" alt="" aria-hidden="true">
-          <select class="setting-select" id="chat-surface-mode">
+        <div class="chat-mode-dropdown" id="chat-mode-dropdown">
+          <select class="setting-select is-enhanced" id="chat-surface-mode" tabindex="-1" aria-hidden="true">
             <option value="auto">跟随页面</option>
             <option value="compact">固定小聊天框</option>
             <option value="full">固定大聊天框</option>
           </select>
+          <button
+            type="button"
+            class="chat-mode-dropdown-trigger"
+            id="chat-mode-dropdown-trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="chat-mode-dropdown-menu"
+          >
+            <span class="chat-mode-dropdown-icon">
+              <img src="assets/ui/chat_icon.png" alt="" aria-hidden="true">
+            </span>
+            <span class="chat-mode-dropdown-current">跟随页面</span>
+            <span class="chat-mode-dropdown-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="chat-mode-dropdown-menu" id="chat-mode-dropdown-menu" role="listbox" hidden>
+            <button type="button" class="chat-mode-dropdown-option selected" role="option" data-value="auto" aria-selected="true">
+              <span class="chat-mode-dropdown-option-copy">
+                <strong>跟随页面</strong>
+                <small>使用页面自身的聊天框设置</small>
+              </span>
+              <span class="chat-mode-dropdown-check" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="chat-mode-dropdown-option" role="option" data-value="compact" aria-selected="false">
+              <span class="chat-mode-dropdown-option-copy">
+                <strong>固定小聊天框</strong>
+                <small>始终使用紧凑聊天框</small>
+              </span>
+              <span class="chat-mode-dropdown-check" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="chat-mode-dropdown-option" role="option" data-value="full" aria-selected="false">
+              <span class="chat-mode-dropdown-option-copy">
+                <strong>固定大聊天框</strong>
+                <small>始终使用完整聊天框</small>
+              </span>
+              <span class="chat-mode-dropdown-check" aria-hidden="true"></span>
+            </button>
+          </div>
         </div>
         <p class="hint" id="chat-mode-hint">应用于浮窗和全屏页面。</p>
       </section>
