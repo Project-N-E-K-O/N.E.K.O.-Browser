@@ -42,6 +42,13 @@ test('the adapter fixes chat size through the host chat surface API', () => {
   assert.match(adapter, /chatMode: fixedChatMode/);
 });
 
+test('the adapter delegates moved chat viewport correction to the host geometry API', () => {
+  assert.match(adapter, /host\.ensureChatSurfaceVisible\(\)/);
+  assert.match(adapter, /window\.addEventListener\('resize', \(\) => \{[\s\S]*?scheduleChatVisibilityCheck\(\)/);
+  assert.match(adapter, /getCurrentChatMode\(\) === 'minimized'/);
+  assert.doesNotMatch(adapter, /shell\.style\.(left|top|transform)\s*=/);
+});
+
 test('component visibility and hit testing stay in extension-owned assets', () => {
   for (const component of ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']) {
     assert.ok(adapter.includes(`'${component}'`));

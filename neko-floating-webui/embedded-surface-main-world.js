@@ -81,6 +81,8 @@
     let pageChatMode = null;
     let connectedParentOrigin = null;
     let regionFrame = 0;
+    let chatVisibilityFrame = 0;
+    let chatVisibilityPending = false;
     let lastRegionSignature = '';
     let managerSyncTicks = 0;
     let pointerRelayFrame = 0;
@@ -148,6 +150,30 @@
         if (fixedChatMode === 'auto' || current === fixedChatMode) return current;
         callHostChatMode(fixedChatMode);
         return getCurrentChatMode();
+    }
+
+    function ensureEmbeddedChatVisible() {
+        const shell = document.getElementById('react-chat-window-shell');
+        const host = window.reactChatWindowHost;
+        if (!shell || !host || typeof host.ensureChatSurfaceVisible !== 'function') return null;
+        if (getCurrentChatMode() === 'minimized') return false;
+        try {
+            return host.ensureChatSurfaceVisible() === true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function scheduleChatVisibilityCheck() {
+        chatVisibilityPending = true;
+        if (chatVisibilityFrame) return;
+        chatVisibilityFrame = window.requestAnimationFrame(() => {
+            chatVisibilityFrame = 0;
+            const moved = ensureEmbeddedChatVisible();
+            if (moved === null) return;
+            chatVisibilityPending = false;
+            if (moved) scheduleRegionReport();
+        });
     }
 
     function setFixedChatMode(nextMode, source) {
@@ -745,7 +771,10 @@
     window.NekoEmbeddedSurface = Object.freeze(api);
 
     window.addEventListener('message', onParentMessage);
-    window.addEventListener('resize', scheduleRegionReport);
+    window.addEventListener('resize', () => {
+        scheduleChatVisibilityCheck();
+        scheduleRegionReport();
+    });
     window.addEventListener('scroll', scheduleRegionReport, true);
     window.addEventListener('pointermove', (event) => {
         scheduleRegionReport();
@@ -771,6 +800,7 @@
         } else if (mode !== fixedChatMode) {
             window.requestAnimationFrame(syncFixedChatMode);
         }
+        scheduleChatVisibilityCheck();
         scheduleRegionReport();
     });
     [
@@ -808,6 +838,7 @@
     const managerSyncInterval = window.setInterval(() => {
         syncAvatarRendering();
         syncFixedChatMode();
+        if (chatVisibilityPending) scheduleChatVisibilityCheck();
         scheduleRegionReport();
         managerSyncTicks += 1;
         if (managerSyncTicks >= 80) window.clearInterval(managerSyncInterval);
@@ -815,5 +846,6 @@
 
     applyComponentState('initial');
     syncFixedChatMode();
+    scheduleChatVisibilityCheck();
     postReady(null);
 })();
