@@ -48,6 +48,17 @@ test('component switches use strict canonical names and update a live embed', ()
   assert.match(loadBlock, /startEmbeddedSurfaceHandshake\(\)/);
 });
 
+test('manual iframe reload uses one direct WebUI navigation without an about:blank hop', () => {
+  const block = functionBlock('handleAction', 'setRoutesOpen');
+  const resetIndex = block.indexOf("resetEmbedPassthrough('manual-reload')");
+  const navigateIndex = block.indexOf('frame.src = target');
+  assert.notEqual(resetIndex, -1);
+  assert.notEqual(navigateIndex, -1);
+  assert.ok(resetIndex < navigateIndex, 'the old embed handshake must reset before navigation');
+  assert.equal((block.match(/frame\.src\s*=/g) || []).length, 1);
+  assert.doesNotMatch(block, /frame\.src\s*=\s*['"]about:blank['"]/);
+});
+
 test('fullscreen iframe is click-through until an interactive region is selected', () => {
   assert.match(source, /data-display-mode="fullscreen"\]\s+#\$\{FRAME_ID\}[\s\S]*?pointer-events: none !important/);
   assert.match(source, /data-embed-interactive="true"[\s\S]*?pointer-events: auto !important/);

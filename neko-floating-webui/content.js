@@ -838,7 +838,6 @@
       if (frame) {
         const target = getFrameTargetUrl();
         resetEmbedPassthrough('manual-reload');
-        try { frame.src = 'about:blank'; } catch {}
         frame.src = target;
       }
       checkHealth();
