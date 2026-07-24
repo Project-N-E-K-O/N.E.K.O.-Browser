@@ -3,6 +3,7 @@
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
   const frame = document.getElementById('webui');
 
+  let bridgeToken = null;
   let parentOrigin = null;
   let targetUrl = null;
   let targetOrigin = null;
@@ -25,11 +26,14 @@
     postToParent('NEKO_FLOATING_FRAME_WEBUI_LOADED', { targetUrl });
   });
 
-  postToParent('NEKO_FLOATING_FRAME_READY');
+  initialize();
 
   function handleParentMessage(event) {
     const data = event.data;
     if (!data || typeof data.type !== 'string') {
+      return;
+    }
+    if (!bridgeToken || data.bridgeToken !== bridgeToken) {
       return;
     }
     if (parentOrigin && event.origin !== parentOrigin) {
@@ -58,7 +62,9 @@
       return;
     }
     try {
-      frame.contentWindow.postMessage(data, targetOrigin, Array.from(event.ports || []));
+      const payload = { ...data };
+      delete payload.bridgeToken;
+      frame.contentWindow.postMessage(payload, targetOrigin, Array.from(event.ports || []));
     } catch {}
   }
 
@@ -94,6 +100,23 @@
       frame.removeAttribute('src');
       postToParent('NEKO_FLOATING_FRAME_ERROR', {
         error: String(error?.message || error || 'Invalid WebUI target')
+      });
+    }
+  }
+
+  async function initialize() {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'NEKO_GET_FRAME_BRIDGE_TOKEN'
+      });
+      if (!response?.ok || typeof response.token !== 'string' || response.token.length < 32) {
+        throw new Error(response?.error || 'Floating frame bridge token is unavailable');
+      }
+      bridgeToken = response.token;
+      postToParent('NEKO_FLOATING_FRAME_READY');
+    } catch (error) {
+      postToParent('NEKO_FLOATING_FRAME_ERROR', {
+        error: String(error?.message || error || 'Floating frame bridge initialization failed')
       });
     }
   }

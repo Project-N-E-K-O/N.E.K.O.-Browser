@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
 const manifest = JSON.parse(read('manifest.json'));
+const background = read('background.js');
 const content = read('content.js');
 const bridgeHtml = read('floating-frame.html');
 const bridgeCss = read('floating-frame.css');
@@ -35,8 +36,27 @@ test('the bridge validates configured targets and both relay directions', () => 
   assert.match(bridge, /type: 'NEKO_GET_STATE'/);
   assert.match(bridge, /candidate\.origin !== configured\.origin/);
   assert.match(bridge, /candidate\.pathname !== configured\.pathname/);
-  assert.match(bridge, /frame\.contentWindow\.postMessage\(data, targetOrigin/);
+  assert.match(bridge, /frame\.contentWindow\.postMessage\(payload, targetOrigin/);
   assert.match(bridge, /window\.parent\.postMessage\(data, parentOrigin/);
+});
+
+test('the first bridge load is authenticated with an extension-owned session token', () => {
+  assert.match(background, /message\.type === 'NEKO_GET_FRAME_BRIDGE_TOKEN'/);
+  assert.match(background, /chrome\.storage\.session\.get\(FRAME_BRIDGE_TOKEN_KEY\)/);
+  assert.match(background, /crypto\.randomUUID\(\)/);
+  assert.match(content, /type: 'NEKO_GET_FRAME_BRIDGE_TOKEN'/);
+  assert.match(content, /bridgeToken: frameBridgeToken/);
+  assert.match(bridge, /type: 'NEKO_GET_FRAME_BRIDGE_TOKEN'/);
+
+  const handlerStart = bridge.indexOf('function handleParentMessage');
+  const handlerEnd = bridge.indexOf('function handleWebuiMessage', handlerStart);
+  const handler = bridge.slice(handlerStart, handlerEnd);
+  const tokenCheck = handler.indexOf('data.bridgeToken !== bridgeToken');
+  const trustAssignment = handler.indexOf('parentOrigin = event.origin');
+  assert.notEqual(tokenCheck, -1);
+  assert.notEqual(trustAssignment, -1);
+  assert.ok(tokenCheck < trustAssignment, 'the token must be checked before trusting the first parent');
+  assert.match(handler, /delete payload\.bridgeToken/);
 });
 
 test('the bridge transfers the microphone port instead of cloning it', () => {

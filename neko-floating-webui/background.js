@@ -36,8 +36,10 @@ const OFFSCREEN_READY_ATTEMPTS = 8;
 const PANEL_HANDOFF_UNLOAD_DELAY_MS = 1200;
 const PANEL_SWEEP_ALARM = 'neko-floating-ws-singleton-sweep';
 const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
+const FRAME_BRIDGE_TOKEN_KEY = 'floatingFrameBridgeToken';
 let panelSyncSeq = 0;
 let sidePanelTransition = Promise.resolve();
+let frameBridgeTokenPromise = null;
 
 chrome.runtime.onInstalled.addListener(async () => {
   const current = await chrome.storage.local.get(null);
@@ -186,6 +188,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'NEKO_GET_STATE') {
     getStoredState().then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'NEKO_GET_FRAME_BRIDGE_TOKEN') {
+    getFrameBridgeToken()
+      .then((token) => sendResponse({ ok: true, token }))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -831,6 +840,25 @@ async function getStoredState() {
       ...(stored.panel || {})
     }
   };
+}
+
+function getFrameBridgeToken() {
+  if (!frameBridgeTokenPromise) {
+    frameBridgeTokenPromise = (async () => {
+      const stored = await chrome.storage.session.get(FRAME_BRIDGE_TOKEN_KEY);
+      const existing = stored?.[FRAME_BRIDGE_TOKEN_KEY];
+      if (typeof existing === 'string' && existing.length >= 32) {
+        return existing;
+      }
+      const token = crypto.randomUUID();
+      await chrome.storage.session.set({ [FRAME_BRIDGE_TOKEN_KEY]: token });
+      return token;
+    })().catch((error) => {
+      frameBridgeTokenPromise = null;
+      throw error;
+    });
+  }
+  return frameBridgeTokenPromise;
 }
 
 async function setSurfaceComponents(value) {

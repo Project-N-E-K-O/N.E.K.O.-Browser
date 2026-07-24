@@ -71,6 +71,8 @@
 
   const activePcmRelays = new Set();
   let pcmWebuiPort = null;
+  let frameBridgeToken = null;
+  let frameBridgeTokenRequest = null;
   let frameBridgeReady = false;
   let frameWebuiReady = false;
   let embedReady = false;
@@ -225,6 +227,7 @@
   embeddingColorSchemeMedia?.addEventListener('change', syncFrameColorScheme);
   window.addEventListener('pageshow', syncFrameColorScheme);
 
+  ensureFrameBridgeToken().catch(() => {});
   autoOpenPanel().catch(() => {});
 
   window.addEventListener('resize', () => {
@@ -1292,11 +1295,14 @@
   }
 
   function postFrameBridgeMessage(payload, transfer = []) {
-    if (!frame?.contentWindow || !frameBridgeReady) {
+    if (!frame?.contentWindow || !frameBridgeReady || !frameBridgeToken) {
       return false;
     }
     try {
-      frame.contentWindow.postMessage(payload, FRAME_BRIDGE_ORIGIN, transfer);
+      frame.contentWindow.postMessage({
+        ...payload,
+        bridgeToken: frameBridgeToken
+      }, FRAME_BRIDGE_ORIGIN, transfer);
       return true;
     } catch {
       return false;
@@ -1307,7 +1313,13 @@
     if (data.type === 'NEKO_FLOATING_FRAME_READY') {
       frameBridgeReady = true;
       frameWebuiReady = false;
-      loadWebuiThroughFrameBridge();
+      ensureFrameBridgeToken()
+        .then(() => {
+          if (frameBridgeReady) {
+            loadWebuiThroughFrameBridge();
+          }
+        })
+        .catch(() => setOnline(false));
       return;
     }
     if (data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED') {
@@ -1323,6 +1335,26 @@
       frameWebuiReady = false;
       setOnline(false);
     }
+  }
+
+  function ensureFrameBridgeToken() {
+    if (frameBridgeToken) {
+      return Promise.resolve(frameBridgeToken);
+    }
+    if (!frameBridgeTokenRequest) {
+      frameBridgeTokenRequest = chrome.runtime.sendMessage({
+        type: 'NEKO_GET_FRAME_BRIDGE_TOKEN'
+      }).then((response) => {
+        if (!response?.ok || typeof response.token !== 'string' || response.token.length < 32) {
+          throw new Error(response?.error || 'Floating frame bridge token is unavailable');
+        }
+        frameBridgeToken = response.token;
+        return frameBridgeToken;
+      }).finally(() => {
+        frameBridgeTokenRequest = null;
+      });
+    }
+    return frameBridgeTokenRequest;
   }
 
   function isEmbeddedSurfaceActive() {
