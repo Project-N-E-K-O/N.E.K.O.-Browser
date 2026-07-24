@@ -4,6 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8');
+const background = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
 
 function functionBlock(name, nextName) {
   const start = source.indexOf(`function ${name}`);
@@ -66,6 +67,85 @@ test('fullscreen iframe is click-through until an interactive region is selected
     pointerBlock.indexOf('lastHostPointer =') < pointerBlock.indexOf('!isEmbedPassthroughActive()'),
     'the last host pointer must be remembered before fullscreen starts'
   );
+});
+
+test('fullscreen uses the embedded avatar without a separate extension wake button', () => {
+  assert.match(
+    source,
+    /data-display-mode="fullscreen"\]\s+#\$\{WAKE_ID\}\s*\{\s*display: none !important/
+  );
+  const dragBlock = functionBlock('startWakeDrag', 'moveWakeDrag');
+  assert.match(dragBlock, /displayMode === 'fullscreen'/);
+  assert.doesNotMatch(source, /wakeFullscreen/);
+});
+
+test('the collapsed cat uses a normal click event while dragging suppresses accidental clicks', () => {
+  assert.match(source, /wakeButton\.addEventListener\('click', handleWakeClick\)/);
+  const clickBlock = functionBlock('handleWakeClick', 'closePanel');
+  assert.match(clickBlock, /panel\?\.dataset\.minimized === 'true'/);
+  assert.match(clickBlock, /wakePanel\(\)/);
+  const endDragBlock = functionBlock('endWakeDrag', 'handleWakeClick');
+  assert.match(endDragBlock, /suppressWakeClick = true/);
+  assert.doesNotMatch(endDragBlock, /wakePanel\(\)/);
+});
+
+test('a new content runtime replaces stale panel DOM left by an extension reload', () => {
+  assert.match(source, /const CONTENT_RUNTIME_ID =/);
+  const ensureBlock = functionBlock('ensurePanel', 'bindActions');
+  assert.match(
+    ensureBlock,
+    /existingHost\.dataset\.nekoContentRuntimeId !== CONTENT_RUNTIME_ID/
+  );
+  assert.match(ensureBlock, /existingHost\.remove\(\)/);
+  const hostBlock = functionBlock('createHost', 'resolveEmbeddingColorScheme');
+  assert.match(hostBlock, /nextHost\.dataset\.nekoContentRuntimeId = CONTENT_RUNTIME_ID/);
+});
+
+test('switching between floating and fullscreen reflows the live WebUI without reloading it', () => {
+  const block = functionBlock('applyDisplayMode', 'ensurePanel');
+  assert.match(block, /previousMode !== mode/);
+  assert.match(block, /requestAnimationFrame/);
+  assert.match(block, /scheduleWebuiReflow\(\)/);
+  assert.doesNotMatch(block, /reloadFrameBridge|NEKO_FLOATING_FRAME_RELOAD/);
+});
+
+test('a collapsed floating surface becomes a live fullscreen surface requesting the host cat form', () => {
+  assert.match(
+    background,
+    /transferCollapsedFloatingToFullscreen = mode === 'fullscreen'[\s\S]*?previous\.displayMode === 'floating'[\s\S]*?previous\.minimized === true/
+  );
+  const transferCondition = background.match(
+    /const transferCollapsedFloatingToFullscreen =[\s\S]*?previous\.minimized === true;/
+  );
+  assert.ok(transferCondition, 'missing collapsed floating transfer condition');
+  assert.doesNotMatch(
+    transferCondition[0],
+    /previous\.enabled/,
+    'fresh installs are collapsed before enabled is initialized'
+  );
+  assert.match(background, /activatePanelInTab\(tab\.id, \{ avatarForm: 'cat' \}\)/);
+  assert.match(background, /type: 'NEKO_APPLY_DISPLAY_MODE',[\s\S]*?minimized,[\s\S]*?avatarForm/);
+  assert.match(
+    background,
+    /restoreCollapsedFloating = mode === 'floating'[\s\S]*?previous\.displayMode === 'fullscreen'[\s\S]*?previous\.fullscreenFromCollapsedFloating === true/
+  );
+  assert.match(background, /fullscreenFromCollapsedFloating = transferCollapsedFloatingToFullscreen/);
+
+  const modeBlock = functionBlock('applyDisplayMode', 'ensurePanel');
+  assert.match(modeBlock, /setAvatarForm\(options\.avatarForm, false\)/);
+  assert.match(modeBlock, /setMinimized\(options\.minimized, false\)/);
+
+  const targetBlock = functionBlock('getFrameTargetUrl', 'resetFrameBridgeState');
+  assert.match(targetBlock, /avatarForm === 'cat'/);
+  assert.match(targetBlock, /searchParams\.set\('avatar_form', 'cat'\)/);
+  assert.match(targetBlock, /searchParams\.set\('avatar_request_id', avatarFormRequestId\)/);
+
+  const connectBlock = functionBlock('sendEmbedConnect', 'postEmbedMessage');
+  assert.match(connectBlock, /avatarForm,/);
+  assert.match(connectBlock, /avatarFormRequestId,/);
+  assert.match(source, /data\.type === 'NEKO_EMBED_AVATAR_FORM_STATE'/);
+  assert.match(source, /data\.status === 'applied'/);
+  assert.match(source, /type: 'NEKO_AVATAR_FORM_STATE'/);
 });
 
 test('embedded iframe inherits the page color scheme to preserve dark-page transparency', () => {

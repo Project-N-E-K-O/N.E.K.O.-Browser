@@ -11,6 +11,8 @@ const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
 const DEFAULT_STATE = {
   enabled: false,
   minimized: true,
+  avatarForm: 'cat',
+  fullscreenFromCollapsedFloating: false,
   wakeStateInitialized: true,
   activeTabId: null,
   activeSidePanelWindowId: null,
@@ -23,7 +25,6 @@ const DEFAULT_STATE = {
     right: 24,
     bottom: 24
   },
-  wakeFullscreen: null,
   webuiUrl: 'http://localhost:48911/'
 };
 
@@ -53,6 +54,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     ...current,
     enabled: false,
     minimized,
+    avatarForm: minimized ? 'cat' : normalizeAvatarForm(current.avatarForm),
+    fullscreenFromCollapsedFloating: false,
     wakeStateInitialized: true,
     activeTabId: null,
     activeSidePanelWindowId: null,
@@ -131,7 +134,8 @@ async function handleActionClick(tab) {
     await chrome.storage.local.set({
       activeTabId: response?.awake ? tab.id : null,
       enabled: Boolean(response?.visible || response?.awake),
-      minimized: Boolean(response?.minimized)
+      minimized: Boolean(response?.minimized),
+      avatarForm: response?.minimized ? 'cat' : normalizeAvatarForm(response?.avatarForm)
     });
     return;
   }
@@ -141,7 +145,8 @@ async function handleActionClick(tab) {
   await chrome.storage.local.set({
     activeTabId: response?.awake ? tab.id : null,
     enabled: Boolean(response?.visible || response?.awake),
-    minimized: Boolean(response?.minimized)
+    minimized: Boolean(response?.minimized),
+    avatarForm: response?.minimized ? 'cat' : normalizeAvatarForm(response?.avatarForm)
   });
 }
 
@@ -161,7 +166,10 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const state = await getStoredState();
   if (state.activeTabId === tabId) {
-    await chrome.storage.local.set({ activeTabId: null });
+    await chrome.storage.local.set({
+      activeTabId: null,
+      fullscreenFromCollapsedFloating: false
+    });
   }
 });
 
@@ -177,7 +185,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
   const tab = await getTab(tabId);
   if (!tab || !isInjectableTab(tab.url, state.webuiUrl)) {
-    await chrome.storage.local.set({ activeTabId: null, minimized: true });
+    await chrome.storage.local.set({
+      activeTabId: null,
+      minimized: true,
+      avatarForm: 'cat',
+      fullscreenFromCollapsedFloating: false
+    });
   }
 });
 
@@ -206,6 +219,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (Object.prototype.hasOwnProperty.call(payload, 'chatSurfaceMode')) {
       payload.chatSurfaceMode = normalizeChatSurfaceMode(payload.chatSurfaceMode);
     }
+    if (Object.prototype.hasOwnProperty.call(payload, 'avatarForm')) {
+      payload.avatarForm = normalizeAvatarForm(payload.avatarForm);
+    }
     if (Object.prototype.hasOwnProperty.call(payload, 'webuiUrl')) {
       const webuiUrl = normalizeNekoUrl(payload.webuiUrl);
       if (!webuiUrl) {
@@ -216,6 +232,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (typeof payload.minimized === 'boolean') {
       payload.wakeStateInitialized = true;
+      payload.avatarForm = payload.minimized ? 'cat' : normalizeAvatarForm(payload.avatarForm);
+      payload.fullscreenFromCollapsedFloating = false;
       if (typeof payload.enabled !== 'boolean') {
         payload.enabled = true;
       }
@@ -316,11 +334,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const payload = {};
 
     if (message.closed) {
-      Object.assign(payload, { activeTabId: null, enabled: false });
+      Object.assign(payload, {
+        activeTabId: null,
+        enabled: false,
+        fullscreenFromCollapsedFloating: false
+      });
     }
 
     if (typeof message.minimized === 'boolean') {
       payload.minimized = message.minimized;
+      payload.avatarForm = message.minimized ? 'cat' : normalizeAvatarForm(message.avatarForm);
+      payload.fullscreenFromCollapsedFloating = false;
       payload.wakeStateInitialized = true;
       payload.activeTabId = sender.tab.id;
       payload.enabled = true;
@@ -337,6 +361,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.sendMessage(sender.tab.id, message).catch(() => {});
     sendResponse({ ok: true });
     return false;
+  }
+
+  if (message.type === 'NEKO_AVATAR_FORM_STATE' && sender.tab?.id) {
+    (async () => {
+      const state = await getStoredState();
+      if (state.activeTabId !== sender.tab.id || state.minimized === true) {
+        return { ok: true, ignored: true, avatarForm: state.avatarForm };
+      }
+      const avatarForm = normalizeAvatarForm(message.avatarForm);
+      await chrome.storage.local.set({
+        avatarForm,
+        ...(avatarForm === 'model' ? { fullscreenFromCollapsedFloating: false } : {})
+      });
+      return { ok: true, avatarForm };
+    })().then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: String(error?.message || error) });
+    });
+    return true;
   }
 
   if (message.type === 'NEKO_MEDIA_REQUEST') {
@@ -447,6 +489,8 @@ async function setDisplayMode(mode) {
       activeSidePanelWindowId,
       enabled: activeSidePanelWindowId !== null,
       minimized: activeSidePanelWindowId === null,
+      avatarForm: activeSidePanelWindowId === null ? 'cat' : normalizeAvatarForm(previous.avatarForm),
+      fullscreenFromCollapsedFloating: false,
       wakeStateInitialized: true
     });
     return { ok: true, mode: 'sidebar' };
@@ -456,6 +500,20 @@ async function setDisplayMode(mode) {
   const shouldTransferAwakePanel = previous.displayMode === 'sidebar'
     && previous.enabled === true
     && previousSidePanelWindowId !== null;
+  const transferCollapsedFloatingToFullscreen = mode === 'fullscreen'
+    && previous.displayMode === 'floating'
+    && previous.minimized === true;
+  const restoreCollapsedFloating = mode === 'floating'
+    && previous.displayMode === 'fullscreen'
+    && previous.fullscreenFromCollapsedFloating === true;
+  const avatarForm = transferCollapsedFloatingToFullscreen
+    ? 'cat'
+    : (restoreCollapsedFloating ? 'cat' : 'model');
+  const minimized = transferCollapsedFloatingToFullscreen
+    ? false
+    : (restoreCollapsedFloating ? true : Boolean(previous.minimized));
+  const fullscreenFromCollapsedFloating = transferCollapsedFloatingToFullscreen
+    || (mode === 'fullscreen' && previous.fullscreenFromCollapsedFloating === true);
 
   if (previousSidePanelWindowId !== null) {
     await deactivateSidePanelWindow(previousSidePanelWindowId);
@@ -464,7 +522,10 @@ async function setDisplayMode(mode) {
   await chrome.storage.local.set({
     displayMode: mode,
     activeSidePanelWindowId: null,
-    activeTabId: null
+    activeTabId: null,
+    minimized,
+    avatarForm,
+    fullscreenFromCollapsedFloating
   });
 
   if (previousSidePanelWindowId !== null) {
@@ -481,19 +542,64 @@ async function setDisplayMode(mode) {
     return { ok: true, mode, transferred: false };
   }
 
-  await sendTabMessage(tab.id, { type: 'NEKO_APPLY_DISPLAY_MODE', mode });
-  if (!shouldTransferAwakePanel) {
+  if (transferCollapsedFloatingToFullscreen) {
+    await activatePanelInTab(tab.id, { avatarForm: 'cat' });
+  }
+
+  const applyResponse = await sendTabMessage(tab.id, {
+    type: 'NEKO_APPLY_DISPLAY_MODE',
+    mode,
+    minimized,
+    avatarForm
+  });
+
+  if (restoreCollapsedFloating) {
+    await chrome.storage.local.set({
+      activeTabId: null,
+      enabled: true,
+      minimized: true,
+      avatarForm: 'cat',
+      fullscreenFromCollapsedFloating: false
+    });
+    return { ok: true, mode, transferred: true, minimized: true, avatarForm: 'cat' };
+  }
+
+  if (!shouldTransferAwakePanel && !transferCollapsedFloatingToFullscreen) {
+    if (applyResponse?.awake) {
+      await chrome.storage.local.set({
+        activeTabId: tab.id,
+        enabled: true,
+        minimized: false,
+        avatarForm: normalizeAvatarForm(applyResponse.avatarForm),
+        fullscreenFromCollapsedFloating: false
+      });
+    }
     return { ok: true, mode, transferred: false };
   }
 
-  await activatePanelInTab(tab.id);
+  if (!transferCollapsedFloatingToFullscreen) {
+    await activatePanelInTab(tab.id);
+  }
   const response = await sendTabMessage(tab.id, { type: 'NEKO_OPEN_SINGLETON' });
   await chrome.storage.local.set({
     activeTabId: response?.awake ? tab.id : null,
     enabled: Boolean(response?.visible || response?.awake),
-    minimized: Boolean(response?.minimized)
+    minimized: Boolean(response?.minimized),
+    avatarForm: transferCollapsedFloatingToFullscreen
+      ? 'cat'
+      : normalizeAvatarForm(response?.avatarForm),
+    fullscreenFromCollapsedFloating: transferCollapsedFloatingToFullscreen
   });
-  return { ok: true, mode, transferred: Boolean(response?.awake) };
+  return {
+    ok: true,
+    mode,
+    transferred: Boolean(response?.awake),
+    minimized: Boolean(response?.minimized),
+    avatarForm: transferCollapsedFloatingToFullscreen
+      ? 'cat'
+      : normalizeAvatarForm(response?.avatarForm),
+    fullscreenFromCollapsedFloating: transferCollapsedFloatingToFullscreen
+  };
 }
 
 async function claimSidePanel(windowId) {
@@ -610,7 +716,11 @@ async function ensureContentScript(tabId) {
 
 async function closeTabPanel(tabId) {
   await sendTabMessage(tabId, { type: 'NEKO_FORCE_CLOSE' });
-  await chrome.storage.local.set({ activeTabId: null, enabled: false });
+  await chrome.storage.local.set({
+    activeTabId: null,
+    enabled: false,
+    fullscreenFromCollapsedFloating: false
+  });
 }
 
 async function minimizeTabPanel(tabId) {
@@ -632,7 +742,9 @@ async function autoAttachPanel(tabId) {
   }
 
   if (state.minimized === false && tab?.active && isInjectableTab(tab.url, state.webuiUrl)) {
-    await activatePanelInTab(tabId);
+    await activatePanelInTab(tabId, {
+      avatarForm: state.fullscreenFromCollapsedFloating === true ? 'cat' : 'model'
+    });
     return {
       ok: true,
       minimized: false,
@@ -662,7 +774,9 @@ async function wakePanelInTab(tabId) {
   return {
     ok: true,
     minimized: false,
-    awake: true
+    fullscreenFromCollapsedFloating: false,
+    awake: true,
+    avatarForm: 'model'
   };
 }
 
@@ -699,6 +813,8 @@ async function syncPanelToTab(tabId, syncSeq) {
     await chrome.storage.local.set({
       activeTabId: null,
       minimized: true,
+      avatarForm: 'cat',
+      fullscreenFromCollapsedFloating: false,
       wakeStateInitialized: true
     });
     const response = await sendTabMessage(tabId, { type: 'NEKO_SYNC_SINGLETON' });
@@ -710,6 +826,9 @@ async function syncPanelToTab(tabId, syncSeq) {
     activeTabId: tabId,
     enabled: true,
     minimized,
+    avatarForm: minimized ? 'cat' : normalizeAvatarForm(state.avatarForm),
+    fullscreenFromCollapsedFloating: state.displayMode === 'fullscreen'
+      && state.fullscreenFromCollapsedFloating === true,
     wakeStateInitialized: true
   });
   await enforceSingleActivePanel(tabId);
@@ -722,7 +841,7 @@ async function syncPanelToTab(tabId, syncSeq) {
   return response || { ok: true, visible: true, minimized, awake: !minimized };
 }
 
-async function activatePanelInTab(tabId) {
+async function activatePanelInTab(tabId, options = {}) {
   const state = await getStoredState();
   if (state.displayMode === 'sidebar') {
     return false;
@@ -737,6 +856,10 @@ async function activatePanelInTab(tabId) {
     activeTabId: tabId,
     enabled: true,
     minimized: false,
+    avatarForm: options.avatarForm === 'cat' ? 'cat' : 'model',
+    fullscreenFromCollapsedFloating: options.avatarForm === 'cat'
+      && state.displayMode === 'fullscreen'
+      && state.fullscreenFromCollapsedFloating === true,
     wakeStateInitialized: true
   });
 
@@ -831,6 +954,10 @@ async function getStoredState() {
     ...DEFAULT_STATE,
     ...stored,
     displayMode: normalizeDisplayMode(stored.displayMode),
+    avatarForm: normalizeAvatarForm(stored.avatarForm),
+    fullscreenFromCollapsedFloating: normalizeDisplayMode(stored.displayMode) === 'fullscreen'
+      && stored.minimized === false
+      && stored.fullscreenFromCollapsedFloating === true,
     surfaceComponents: normalizeSurfaceComponents(stored.surfaceComponents),
     chatSurfaceMode: normalizeChatSurfaceMode(stored.chatSurfaceMode),
     webuiUrl: normalizeNekoUrl(stored.webuiUrl) || DEFAULT_STATE.webuiUrl,
@@ -904,7 +1031,12 @@ async function setWebuiUrl(value) {
     const activeTab = await getTab(activeTabId);
     if (!isInjectableTab(activeTab?.url, webuiUrl)) {
       await sendTabMessage(activeTabId, { type: 'NEKO_FORCE_CLOSE' });
-      await chrome.storage.local.set({ activeTabId: null, minimized: true });
+      await chrome.storage.local.set({
+        activeTabId: null,
+        minimized: true,
+        avatarForm: 'cat',
+        fullscreenFromCollapsedFloating: false
+      });
     } else {
       await sendTabMessage(activeTabId, {
         type: 'NEKO_APPLY_WEBUI_URL',
@@ -949,6 +1081,10 @@ function normalizeDisplayMode(mode) {
     return mode;
   }
   return 'floating';
+}
+
+function normalizeAvatarForm(value) {
+  return value === 'cat' ? 'cat' : 'model';
 }
 
 function normalizeSurfaceComponents(value) {

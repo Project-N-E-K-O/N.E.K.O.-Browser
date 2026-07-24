@@ -35,6 +35,7 @@ html.neko-embedded-surface[data-neko-surface-avatar="off"] #vrm-canvas,
 html.neko-embedded-surface[data-neko-surface-avatar="off"] #mmd-container,
 html.neko-embedded-surface[data-neko-surface-avatar="off"] #mmd-canvas,
 html.neko-embedded-surface[data-neko-surface-avatar="off"] #pngtuber-container,
+html.neko-embedded-surface[data-neko-surface-avatar="off"] [id$="-return-button-container"],
 html.neko-embedded-surface[data-neko-surface-avatar="off"] #avatar-reaction-bubble,
 html.neko-embedded-surface[data-neko-surface-avatar="off"] #avatar-reaction-bubble-debug-overlay {
     display: none !important;
@@ -67,7 +68,6 @@ html.neko-embedded-surface[data-neko-surface-subtitle="off"] #subtitle-settings-
 
 html.neko-embedded-surface[data-neko-surface-controls="off"] [id$="-floating-buttons"],
 html.neko-embedded-surface[data-neko-surface-controls="off"] [id$="-lock-icon"],
-html.neko-embedded-surface[data-neko-surface-controls="off"] [id$="-return-button-container"],
 html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="live2d-popup-"],
 html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="vrm-popup-"],
 html.neko-embedded-surface[data-neko-surface-controls="off"] [id^="mmd-popup-"],
@@ -80,6 +80,16 @@ html.neko-embedded-surface[data-neko-surface-controls="off"] [data-neko-sidepane
     display: none !important;
     visibility: hidden !important;
     pointer-events: none !important;
+}
+
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #live2d-container,
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #live2d-canvas,
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #vrm-container,
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #vrm-canvas,
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #mmd-container,
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #mmd-canvas,
+html.neko-embedded-surface[data-neko-avatar-form-request="cat"][data-neko-avatar-form-state="pending"] #pngtuber-container {
+    visibility: hidden !important;
 }
 
 html.neko-embedded-surface[data-neko-surface-agent-hud="off"] #agent-task-hud,

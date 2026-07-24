@@ -12,8 +12,11 @@
     document.documentElement.dataset.nekoEmbeddedSurface = 'true';
     const initialComponents = params.has('components') ? params.get('components') : 'all';
     const initialChatMode = params.get('chat_mode');
+    const initialAvatarForm = normalizeAvatarForm(params.get('avatar_form'));
+    const initialAvatarFormRequestId = String(params.get('avatar_request_id') || '').trim() || null;
 
     const PROTOCOL_VERSION = 1;
+    const MOBILE_VIEWPORT_MAX_WIDTH = 768;
     const COMPONENT_ORDER = Object.freeze(['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']);
     const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
     const UI_REGION_SELECTORS = Object.freeze({
@@ -50,7 +53,6 @@
         controls: [
             '[id$="-floating-buttons"]',
             '[id$="-lock-icon"]',
-            '[id$="-return-button-container"]',
             '[id^="live2d-popup-"]',
             '[id^="vrm-popup-"]',
             '[id^="mmd-popup-"]',
@@ -71,6 +73,7 @@
             '[data-neko-toast]'
         ],
         avatar: [
+            '[id$="-return-button-container"]',
             '#avatar-reaction-bubble.is-visible',
             '[data-neko-embed-interactive="avatar"]'
         ]
@@ -87,7 +90,20 @@
     let managerSyncTicks = 0;
     let pointerRelayFrame = 0;
     let pendingPointerRelay = null;
+    let responsiveViewportFrame = 0;
+    let lastMobileViewport = isMobileViewport();
+    let requestedAvatarForm = initialAvatarForm;
+    let avatarFormRequestId = initialAvatarFormRequestId;
+    let avatarFormSyncTimer = 0;
+    let avatarFormDispatchedAt = 0;
+    let avatarModelReturnDispatchedAt = 0;
+    let lastAvatarFormReport = '';
     const managersPausedBySurface = new WeakSet();
+
+    if (requestedAvatarForm === 'cat') {
+        document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
+        document.documentElement.dataset.nekoAvatarFormState = 'pending';
+    }
 
     function normalizeComponents(value) {
         let values = value;
@@ -110,6 +126,286 @@
     function normalizeChatMode(value) {
         const normalized = String(value || '').trim().toLowerCase();
         return CHAT_SURFACE_MODES.includes(normalized) ? normalized : 'auto';
+    }
+
+    function normalizeAvatarForm(value) {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (normalized === 'cat' || normalized === 'model') return normalized;
+        return null;
+    }
+
+    function isMobileViewport() {
+        return window.innerWidth <= MOBILE_VIEWPORT_MAX_WIDTH;
+    }
+
+    function findActiveAvatarManager() {
+        const candidates = [
+            { prefix: 'live2d', manager: window.live2dManager },
+            { prefix: 'vrm', manager: window.vrmManager },
+            { prefix: 'mmd', manager: window.mmdManager },
+            { prefix: 'pngtuber', manager: window.pngtuberManager }
+        ].filter((candidate) => candidate.manager && typeof candidate.manager.setupFloatingButtons === 'function');
+
+        return candidates.find((candidate) => (
+            document.getElementById(`${candidate.prefix}-floating-buttons`)
+            || document.getElementById(`${candidate.prefix}-lock-icon`)
+            || document.getElementById(`${candidate.prefix}-return-button-container`)
+        )) || null;
+    }
+
+    function rebuildActiveAvatarControls() {
+        const active = findActiveAvatarManager();
+        if (!active) return false;
+        const manager = active.manager;
+        if (manager._isInReturnState || manager._goodbyeClicked) return false;
+
+        try {
+            if (active.prefix === 'live2d') {
+                const model = manager.currentModel;
+                if (!model || model.destroyed) return false;
+                manager.setupFloatingButtons(model);
+            } else {
+                manager.setupFloatingButtons();
+            }
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function syncResponsiveViewportMode() {
+        const mobileViewport = isMobileViewport();
+        if (mobileViewport === lastMobileViewport) return false;
+        const controlsRebuilt = rebuildActiveAvatarControls();
+        syncFixedChatMode();
+        scheduleChatVisibilityCheck();
+        scheduleRegionReport();
+        if (!controlsRebuilt) return false;
+        lastMobileViewport = mobileViewport;
+        return true;
+    }
+
+    function scheduleResponsiveViewportSync() {
+        if (responsiveViewportFrame) return;
+        responsiveViewportFrame = window.requestAnimationFrame(() => {
+            responsiveViewportFrame = 0;
+            syncResponsiveViewportMode();
+        });
+    }
+
+    function getAvatarManagers() {
+        return [
+            window.live2dManager,
+            window.vrmManager,
+            window.mmdManager,
+            window.pngtuberManager
+        ].filter(Boolean);
+    }
+
+    function getVisibleReturnContainer() {
+        const containers = document.querySelectorAll(
+            '[id$="-return-button-container"][data-neko-return-visible="true"]'
+        );
+        return Array.from(containers).find((container) => isRendered(container)) || null;
+    }
+
+    function hasAcceptedGoodbyeState() {
+        if (document.querySelector('[id$="-return-button-container"][data-neko-return-visible="true"]')) {
+            return true;
+        }
+        return getAvatarManagers().some((manager) => (
+            manager._goodbyeClicked === true || manager._isInReturnState === true
+        ));
+    }
+
+    function hasGoodbyeEntryPoint() {
+        return Boolean(document.querySelector(
+            '#live2d-btn-goodbye, #vrm-btn-goodbye, #mmd-btn-goodbye, #pngtuber-btn-goodbye'
+        ));
+    }
+
+    function detectAvatarFormState() {
+        const returnContainer = getVisibleReturnContainer();
+        if (returnContainer) {
+            return {
+                avatarForm: 'cat',
+                visible: true,
+                status: 'applied',
+                returnContainerId: returnContainer.id || null
+            };
+        }
+        if (hasAcceptedGoodbyeState()) {
+            return {
+                avatarForm: 'cat',
+                visible: false,
+                status: 'transitioning',
+                returnContainerId: null
+            };
+        }
+        if (hasGoodbyeEntryPoint() || getAvatarManagers().length > 0) {
+            return {
+                avatarForm: 'model',
+                visible: true,
+                status: 'applied',
+                returnContainerId: null
+            };
+        }
+        return {
+            avatarForm: 'model',
+            visible: false,
+            status: 'waiting',
+            returnContainerId: null
+        };
+    }
+
+    function reportAvatarFormState(source, force) {
+        const state = detectAvatarFormState();
+        const requestApplied = requestedAvatarForm === 'cat'
+            ? state.avatarForm === 'cat' && state.visible
+            : (requestedAvatarForm === 'model'
+                ? state.avatarForm === 'model' && state.status === 'applied'
+                : state.status === 'applied');
+        const payload = {
+            avatarForm: state.avatarForm,
+            avatarFormRequestId,
+            requestedAvatarForm,
+            visible: state.visible,
+            status: requestApplied
+                ? 'applied'
+                : (state.status === 'waiting' ? 'waiting' : 'transitioning'),
+            returnContainerId: state.returnContainerId,
+            source: source || 'host-observer'
+        };
+        const signature = JSON.stringify(payload);
+        if (!force && signature === lastAvatarFormReport) return state;
+        lastAvatarFormReport = signature;
+        postToParent('NEKO_EMBED_AVATAR_FORM_STATE', payload);
+        return state;
+    }
+
+    function scheduleAvatarFormSync(delayMs = 0, source = 'host-observer') {
+        if (avatarFormSyncTimer) return;
+        avatarFormSyncTimer = window.setTimeout(() => {
+            avatarFormSyncTimer = 0;
+            syncRequestedAvatarForm(source);
+        }, Math.max(0, Number(delayMs) || 0));
+    }
+
+    function requestAvatarForm(value, requestId, source) {
+        const nextForm = normalizeAvatarForm(value);
+        if (nextForm !== 'cat') {
+            if (requestedAvatarForm !== 'model') {
+                avatarModelReturnDispatchedAt = 0;
+            }
+            requestedAvatarForm = nextForm === 'model' ? 'model' : null;
+            avatarFormRequestId = null;
+            avatarFormDispatchedAt = 0;
+            delete document.documentElement.dataset.nekoAvatarFormRequest;
+            document.documentElement.dataset.nekoAvatarFormState = 'pending-model';
+            scheduleAvatarFormSync(0, source || 'parent-request');
+            return;
+        }
+        requestedAvatarForm = 'cat';
+        avatarFormRequestId = String(requestId || avatarFormRequestId || '').trim() || null;
+        avatarModelReturnDispatchedAt = 0;
+        document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
+        document.documentElement.dataset.nekoAvatarFormState = 'pending';
+        scheduleAvatarFormSync(0, source || 'parent-request');
+    }
+
+    function syncRequestedAvatarForm(source) {
+        const state = detectAvatarFormState();
+        if (requestedAvatarForm !== 'cat') {
+            if (requestedAvatarForm === 'model' && state.avatarForm === 'cat') {
+                document.documentElement.dataset.nekoAvatarFormState = 'pending-model';
+                const now = Date.now();
+                if (!avatarModelReturnDispatchedAt || now - avatarModelReturnDispatchedAt >= 2000) {
+                    avatarModelReturnDispatchedAt = now;
+                    dispatchAvatarReturnToModel();
+                }
+                reportAvatarFormState(source || 'parent-request', true);
+                scheduleAvatarFormSync(150, 'parent-request');
+                return false;
+            }
+            if (state.status === 'applied') {
+                document.documentElement.dataset.nekoAvatarFormState = state.avatarForm;
+                if (requestedAvatarForm === 'model') {
+                    syncResponsiveViewportMode();
+                }
+            }
+            reportAvatarFormState(source || 'host-observer', false);
+            return state.status === 'applied';
+        }
+
+        if (state.avatarForm === 'cat' && state.visible) {
+            document.documentElement.dataset.nekoAvatarFormState = 'cat';
+            reportAvatarFormState(source || 'host-observer', false);
+            scheduleRegionReport();
+            return true;
+        }
+
+        document.documentElement.dataset.nekoAvatarFormState = 'pending';
+        if (state.avatarForm === 'cat') {
+            reportAvatarFormState(source || 'host-transition', true);
+            scheduleAvatarFormSync(150, 'host-transition');
+            return false;
+        }
+
+        if (document.readyState !== 'complete' || !hasGoodbyeEntryPoint()) {
+            reportAvatarFormState(source || 'host-waiting', false);
+            scheduleAvatarFormSync(250, 'host-waiting');
+            return false;
+        }
+
+        const now = Date.now();
+        if (!avatarFormDispatchedAt || now - avatarFormDispatchedAt >= 2000) {
+            avatarFormDispatchedAt = now;
+            window.dispatchEvent(new CustomEvent('live2d-goodbye-click', {
+                detail: {
+                    source: 'browser-extension-avatar-form',
+                    reason: 'floating-minimized-to-fullscreen',
+                    avatarFormRequestId
+                }
+            }));
+        }
+        reportAvatarFormState('extension-request', true);
+        scheduleAvatarFormSync(150, 'extension-request');
+        return false;
+    }
+
+    function dispatchAvatarReturnToModel() {
+        const container = document.querySelector(
+            '[id$="-return-button-container"][data-neko-return-visible="true"]'
+        );
+        let prefix = null;
+        let rect = null;
+        if (container) {
+            const match = String(container.id || '').match(/^([a-z0-9-]+)-return-button-container$/i);
+            prefix = match && match[1] ? match[1] : null;
+            const bounds = container.getBoundingClientRect();
+            rect = {
+                left: bounds.left,
+                top: bounds.top,
+                width: bounds.width,
+                height: bounds.height
+            };
+        }
+        if (!prefix) {
+            const active = [
+                ['live2d', window.live2dManager],
+                ['vrm', window.vrmManager],
+                ['mmd', window.mmdManager],
+                ['pngtuber', window.pngtuberManager]
+            ].find(([, manager]) => manager && (
+                manager._goodbyeClicked === true || manager._isInReturnState === true
+            ));
+            prefix = active ? active[0] : null;
+        }
+        if (!prefix) return false;
+        window.dispatchEvent(new CustomEvent(`${prefix}-return-click`, {
+            detail: rect ? { returnButtonRect: rect } : {}
+        }));
+        return true;
     }
 
     function getCurrentChatMode() {
@@ -670,9 +966,11 @@
             state: componentState(),
             chatMode: fixedChatMode,
             currentChatMode: getCurrentChatMode(),
+            avatarForm: detectAvatarFormState().avatarForm,
             capabilities: {
                 dynamicComponents: true,
                 fixedChatMode: true,
+                avatarFormControl: true,
                 interactiveRegions: true,
                 modelHitTest: true,
                 pointerRelay: true
@@ -692,6 +990,7 @@
         if (data.type === 'NEKO_EMBED_CONNECT') {
             if (data.components !== undefined) setComponents(data.components, 'parent-connect');
             if (data.chatMode !== undefined) setFixedChatMode(data.chatMode, 'parent-connect');
+            requestAvatarForm(data.avatarForm, data.avatarFormRequestId, 'parent-connect');
             postReady(data.requestId);
             return;
         }
@@ -719,13 +1018,19 @@
             return;
         }
 
+        if (data.type === 'NEKO_EMBED_SET_AVATAR_FORM') {
+            requestAvatarForm(data.avatarForm, data.avatarFormRequestId || data.requestId, 'parent-message');
+            return;
+        }
+
         if (data.type === 'NEKO_EMBED_GET_STATE') {
             postToParent('NEKO_EMBED_STATE', {
                 requestId: data.requestId || null,
                 components: componentList(),
                 state: componentState(),
                 chatMode: fixedChatMode,
-                currentChatMode: getCurrentChatMode()
+                currentChatMode: getCurrentChatMode(),
+                avatarForm: detectAvatarFormState().avatarForm
             });
             return;
         }
@@ -771,7 +1076,25 @@
     window.NekoEmbeddedSurface = Object.freeze(api);
 
     window.addEventListener('message', onParentMessage);
+    window.addEventListener('live2d-goodbye-click', (event) => {
+        const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+        requestAvatarForm('cat', detail.avatarFormRequestId, 'host-event');
+        scheduleAvatarFormSync(0, 'host-event');
+    });
+    [
+        'live2d-return-click',
+        'vrm-return-click',
+        'mmd-return-click',
+        'pngtuber-return-click'
+    ].forEach((eventName) => {
+        window.addEventListener(eventName, () => {
+            requestAvatarForm('model', null, 'host-event');
+            scheduleAvatarFormSync(100, 'host-event');
+            scheduleResponsiveViewportSync();
+        });
+    });
     window.addEventListener('resize', () => {
+        scheduleResponsiveViewportSync();
         scheduleChatVisibilityCheck();
         scheduleRegionReport();
     });
@@ -813,11 +1136,16 @@
     ].forEach((eventName) => {
         window.addEventListener(eventName, () => {
             syncAvatarRendering();
+            scheduleAvatarFormSync(0, 'host-event');
+            scheduleResponsiveViewportSync();
             scheduleRegionReport();
         });
     });
 
-    const observer = new MutationObserver(scheduleRegionReport);
+    const observer = new MutationObserver(() => {
+        scheduleAvatarFormSync(0, 'host-observer');
+        scheduleRegionReport();
+    });
     observer.observe(document.body || document.documentElement, {
         attributes: true,
         attributeFilter: [
@@ -837,6 +1165,7 @@
 
     const managerSyncInterval = window.setInterval(() => {
         syncAvatarRendering();
+        scheduleAvatarFormSync(0, 'host-observer');
         syncFixedChatMode();
         if (chatVisibilityPending) scheduleChatVisibilityCheck();
         scheduleRegionReport();
@@ -847,5 +1176,6 @@
     applyComponentState('initial');
     syncFixedChatMode();
     scheduleChatVisibilityCheck();
+    scheduleAvatarFormSync(0, 'initial');
     postReady(null);
 })();

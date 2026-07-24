@@ -53,6 +53,67 @@ test('the adapter delegates moved chat viewport correction to the host geometry 
   assert.doesNotMatch(adapter, /shell\.style\.(left|top|transform)\s*=/);
 });
 
+test('crossing the mobile breakpoint rebuilds only the active avatar controls', () => {
+  assert.match(adapter, /const MOBILE_VIEWPORT_MAX_WIDTH = 768/);
+  assert.match(adapter, /mobileViewport === lastMobileViewport/);
+  assert.match(adapter, /document\.getElementById\(`\$\{candidate\.prefix\}-floating-buttons`\)/);
+  assert.match(adapter, /active\.prefix === 'live2d'/);
+  assert.match(adapter, /manager\.setupFloatingButtons\(model\)/);
+  assert.match(adapter, /manager\.setupFloatingButtons\(\)/);
+  assert.match(adapter, /manager\._isInReturnState \|\| manager\._goodbyeClicked/);
+  const responsiveBlock = adapter.slice(
+    adapter.indexOf('function syncResponsiveViewportMode'),
+    adapter.indexOf('function scheduleResponsiveViewportSync')
+  );
+  assert.match(responsiveBlock, /const controlsRebuilt = rebuildActiveAvatarControls\(\)/);
+  assert.match(responsiveBlock, /if \(!controlsRebuilt\) return false/);
+  assert.ok(
+    responsiveBlock.indexOf('if (!controlsRebuilt)') < responsiveBlock.indexOf('lastMobileViewport = mobileViewport'),
+    'the mobile breakpoint must remain pending until avatar controls are rebuilt'
+  );
+  const resizeListener = adapter.match(
+    /window\.addEventListener\('resize', \(\) => \{([^{}]*)\}\);/
+  );
+  assert.ok(resizeListener, 'missing the window resize listener');
+  assert.match(resizeListener[1], /scheduleResponsiveViewportSync\(\)/);
+  const avatarSyncBlock = adapter.slice(
+    adapter.indexOf('function syncRequestedAvatarForm'),
+    adapter.indexOf('function dispatchAvatarReturnToModel')
+  );
+  assert.match(
+    avatarSyncBlock,
+    /requestedAvatarForm === 'model'[\s\S]*?syncResponsiveViewportMode\(\)/
+  );
+});
+
+test('the adapter acknowledges the host cat form only after the return cat is rendered', () => {
+  assert.match(adapter, /params\.get\('avatar_form'\)/);
+  assert.match(adapter, /data\.type === 'NEKO_EMBED_SET_AVATAR_FORM'/);
+  assert.match(adapter, /new CustomEvent\('live2d-goodbye-click'/);
+  assert.match(adapter, /source: 'browser-extension-avatar-form'/);
+  assert.match(adapter, /\[data-neko-return-visible="true"\]/);
+  assert.match(adapter, /isRendered\(container\)/);
+  assert.match(adapter, /requestApplied = requestedAvatarForm === 'cat'/);
+  assert.match(adapter, /state\.avatarForm === 'cat' && state\.visible/);
+  assert.match(adapter, /type,\s*protocolVersion/);
+  assert.match(adapter, /postToParent\('NEKO_EMBED_AVATAR_FORM_STATE'/);
+  assert.match(adapter, /avatarFormControl: true/);
+  assert.match(adapter, /'pngtuber-return-click'/);
+  assert.match(adapter, /function dispatchAvatarReturnToModel\(\)/);
+  assert.match(adapter, /new CustomEvent\(`\$\{prefix\}-return-click`/);
+  assert.match(css, /data-neko-avatar-form-request="cat"/);
+
+  const controlsRule = css.match(
+    /html\.neko-embedded-surface\[data-neko-surface-controls="off"\][\s\S]*?\{[\s\S]*?\}/
+  );
+  assert.ok(controlsRule, 'missing controls visibility rule');
+  assert.doesNotMatch(controlsRule[0], /return-button-container/);
+  assert.match(
+    adapter,
+    /avatar:\s*\[\s*'\[id\$="-return-button-container"\]'/
+  );
+});
+
 test('component visibility and hit testing stay in extension-owned assets', () => {
   for (const component of ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']) {
     assert.ok(adapter.includes(`'${component}'`));

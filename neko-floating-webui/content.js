@@ -13,6 +13,8 @@
   const FRAME_BRIDGE_SENDER = 'neko-floating-frame-bridge';
   const EMBED_PROTOCOL_VERSION = 1;
   const EMBED_PROTOCOL_FALLBACK_MS = 1500;
+  const CONTENT_RUNTIME_ID = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const EMBED_SURFACE_COMPONENT_ORDER = Object.freeze([
     'avatar',
     'chat',
@@ -25,6 +27,7 @@
   const DEFAULT_STATE = {
     enabled: false,
     minimized: true,
+    avatarForm: 'cat',
     displayMode: 'floating',
     surfaceComponents: EMBED_SURFACE_COMPONENT_ORDER.slice(),
     chatSurfaceMode: 'auto',
@@ -34,7 +37,6 @@
       right: 24,
       bottom: 24
     },
-    wakeFullscreen: null,
     webuiUrl: 'http://localhost:48911/'
   };
 
@@ -48,10 +50,10 @@
   window.__nekoFloatingWebuiLoaded = true;
 
   let currentPanel = { ...DEFAULT_STATE.panel };
-  let wakeFullscreenPos = null;
-  let suppressNextClick = false;
   let webuiUrl = DEFAULT_STATE.webuiUrl;
   let displayMode = DEFAULT_STATE.displayMode;
+  let avatarForm = DEFAULT_STATE.avatarForm;
+  let avatarFormRequestId = null;
   let surfaceComponents = DEFAULT_STATE.surfaceComponents.slice();
   let chatSurfaceMode = DEFAULT_STATE.chatSurfaceMode;
   let host = null;
@@ -68,6 +70,8 @@
   let dragSession = null;
   let resizeSession = null;
   let wakeDragSession = null;
+  let suppressWakeClick = false;
+  let suppressWakeClickTimer = 0;
 
   const activePcmRelays = new Set();
   let pcmWebuiPort = null;
@@ -153,8 +157,11 @@
     }
 
     if (message.type === 'NEKO_APPLY_DISPLAY_MODE') {
-      applyDisplayMode(normalizeDisplayMode(message.mode));
-      sendResponse({ ok: true });
+      applyDisplayMode(normalizeDisplayMode(message.mode), {
+        minimized: message.minimized,
+        avatarForm: message.avatarForm
+      });
+      sendResponse({ ok: true, ...getPanelStatus() });
       return false;
     }
 
@@ -329,20 +336,20 @@
       ...DEFAULT_STATE.panel,
       ...(state.panel || {})
     });
-    wakeFullscreenPos = normalizeWakeFullscreenPos(state.wakeFullscreen);
     webuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
     updateOfflineMessage();
     displayMode = normalizeDisplayMode(state.displayMode);
+    setAvatarForm(state.avatarForm, false);
     surfaceComponents = normalizeSurfaceComponents(state.surfaceComponents);
     chatSurfaceMode = normalizeChatSurfaceMode(state.chatSurfaceMode);
     panel.dataset.displayMode = displayMode;
     panel.hidden = false;
-    applyWakeFullscreenPos();
     applyPanelStyles(panel, currentPanel);
   }
 
-  function applyDisplayMode(mode) {
+  function applyDisplayMode(mode, options = {}) {
     const previousMode = displayMode;
+    setAvatarForm(options.avatarForm, false);
     displayMode = mode;
     if (mode === 'sidebar') {
       closePanel();
@@ -352,9 +359,8 @@
       ensurePanel();
     }
     panel.dataset.displayMode = mode;
-    // 切换显示模式时重置全屏胶囊定位（进入全屏时恢复已保存位置，离开全屏时清除 inline）
-    if (previousMode !== mode) {
-      applyWakeFullscreenPos();
+    if (typeof options.minimized === 'boolean') {
+      setMinimized(options.minimized, false);
     }
     if (previousMode !== mode) {
       resetEmbedPassthrough('display-mode-change');
@@ -369,10 +375,24 @@
         ensureFrameLoaded();
       }
     }
+    if (previousMode !== mode && panel.dataset.minimized !== 'true') {
+      window.requestAnimationFrame(() => {
+        if (displayMode === mode && panel?.dataset.minimized !== 'true') {
+          scheduleWebuiReflow();
+        }
+      });
+    }
     saveState({ displayMode: mode });
   }
 
   function ensurePanel() {
+    const existingHost = document.getElementById(HOST_ID);
+    if (
+      existingHost
+      && existingHost.dataset.nekoContentRuntimeId !== CONTENT_RUNTIME_ID
+    ) {
+      existingHost.remove();
+    }
     host = document.getElementById(HOST_ID) || createHost();
     shadow = host.shadowRoot || host.attachShadow({ mode: 'open' });
     panel = shadow.getElementById(PANEL_ID);
@@ -684,17 +704,7 @@
       }
 
       #${PANEL_ID}[data-display-mode="fullscreen"] #${WAKE_ID} {
-        display: flex !important;
-        position: fixed !important;
-        top: 16px;
-        right: 16px;
-        width: 72px !important;
-        height: 72px !important;
-        padding: 0;
-        border-radius: 0 !important;
-        pointer-events: auto !important;
-        z-index: 5;
-        cursor: grab;
+        display: none !important;
       }
 
       #${PANEL_ID}[data-resize-direction="e"],
@@ -744,19 +754,7 @@
     wakeButton.addEventListener('pointerup', endWakeDrag);
     wakeButton.addEventListener('pointercancel', endWakeDrag);
     wakeButton.addEventListener('lostpointercapture', endWakeDrag);
-    wakeButton.addEventListener('click', () => {
-      // 拖动结束后抑制一次 click，避免全屏模式误切换显示/隐藏
-      if (suppressNextClick) {
-        suppressNextClick = false;
-        return;
-      }
-      if (displayMode !== 'fullscreen' || !panel) {
-        return;
-      }
-      const isHidden = panel.dataset.minimized !== 'false';
-      setMinimized(!isHidden, true);
-    });
-
+    wakeButton.addEventListener('click', handleWakeClick);
     const toolbarEl = document.createElement('header');
     toolbarEl.className = 'toolbar';
     toolbarEl.dataset.dragHandle = '';
@@ -993,6 +991,9 @@
     if (!panel) {
       return;
     }
+    if (minimized) {
+      setAvatarForm('cat', false);
+    }
     panel.dataset.minimized = String(minimized);
 
     if (minimized) {
@@ -1003,10 +1004,11 @@
     }
 
     if (persist) {
-      saveState({ enabled: true, minimized });
+      saveState({ enabled: true, minimized, avatarForm });
       chrome.runtime.sendMessage({
         type: 'NEKO_PANEL_STATE',
-        minimized
+        minimized,
+        avatarForm
       }).catch(() => {});
     }
   }
@@ -1016,6 +1018,7 @@
       chrome.runtime.sendMessage({ type: 'NEKO_WAKE_PANEL' }).catch(() => null),
       new Promise((resolve) => setTimeout(() => resolve(null), 2000))
     ]);
+    setAvatarForm(response?.avatarForm, false);
     setMinimized(false, response?.ok ? false : true);
   }
 
@@ -1134,36 +1137,24 @@
     if (event.button !== 0 || !panel || !wakeButton) {
       return;
     }
-    // 新的 pointerdown，清除上次可能残留的 click 抑制标志（如 pointercancel 未产生 click）
-    suppressNextClick = false;
-    const isFullscreen = displayMode === 'fullscreen';
-    // 浮窗模式下只有最小化时才允许拖动胶囊；全屏模式下胶囊常驻可拖动
-    if (!isFullscreen && panel.dataset.minimized !== 'true') {
+    // 全屏模式直接使用 WebUI 自带的猫；插件唤醒胶囊只属于最小化浮窗。
+    if (displayMode === 'fullscreen' || panel.dataset.minimized !== 'true') {
       return;
     }
-    event.stopPropagation();
-    if (isFullscreen) {
-      const rect = wakeButton.getBoundingClientRect();
-      wakeDragSession = {
-        pointerId: event.pointerId,
-        startX: getPointerScreenX(event),
-        startY: getPointerScreenY(event),
-        mode: 'fullscreen',
-        startLeft: rect.left,
-        startTop: rect.top,
-        moved: false
-      };
-    } else {
-      wakeDragSession = {
-        pointerId: event.pointerId,
-        startX: getPointerScreenX(event),
-        startY: getPointerScreenY(event),
-        mode: 'floating',
-        startRight: currentPanel.right,
-        startBottom: currentPanel.bottom,
-        moved: false
-      };
+    suppressWakeClick = false;
+    if (suppressWakeClickTimer) {
+      window.clearTimeout(suppressWakeClickTimer);
+      suppressWakeClickTimer = 0;
     }
+    event.stopPropagation();
+    wakeDragSession = {
+      pointerId: event.pointerId,
+      startX: getPointerScreenX(event),
+      startY: getPointerScreenY(event),
+      startRight: currentPanel.right,
+      startBottom: currentPanel.bottom,
+      moved: false
+    };
     panel.dataset.wakeDragging = 'true';
     try { wakeButton.setPointerCapture(event.pointerId); } catch {}
   }
@@ -1183,23 +1174,12 @@
     }
     wakeDragSession.moved = true;
 
-    if (wakeDragSession.mode === 'fullscreen') {
-      const size = wakeButton.offsetWidth || 72;
-      const maxLeft = Math.max(0, window.innerWidth - size);
-      const maxTop = Math.max(0, window.innerHeight - size);
-      const left = Math.max(0, Math.min(Math.round(wakeDragSession.startLeft + deltaX), maxLeft));
-      const top = Math.max(0, Math.min(Math.round(wakeDragSession.startTop + deltaY), maxTop));
-      wakeButton.style.left = `${left}px`;
-      wakeButton.style.top = `${top}px`;
-      wakeButton.style.right = 'auto';
-    } else {
-      currentPanel = clampMinimizedPanelPosition({
-        ...currentPanel,
-        right: wakeDragSession.startRight - deltaX,
-        bottom: wakeDragSession.startBottom - deltaY
-      });
-      applyPanelStyles(panel, currentPanel);
-    }
+    currentPanel = clampMinimizedPanelPosition({
+      ...currentPanel,
+      right: wakeDragSession.startRight - deltaX,
+      bottom: wakeDragSession.startBottom - deltaY
+    });
+    applyPanelStyles(panel, currentPanel);
   }
 
   function endWakeDrag(event) {
@@ -1207,7 +1187,6 @@
       return;
     }
     const moved = wakeDragSession.moved;
-    const mode = wakeDragSession.mode;
     wakeDragSession = null;
     if (panel) {
       delete panel.dataset.wakeDragging;
@@ -1218,20 +1197,30 @@
     if (moved) {
       event.preventDefault();
       event.stopPropagation();
-      // 抑制拖动结束后合成的 click 事件，避免全屏模式误切换显示/隐藏
-      suppressNextClick = true;
-      if (mode === 'floating') {
-        saveState({ panel: currentPanel });
-      } else if (mode === 'fullscreen') {
-        const left = parseFloat(wakeButton?.style.left);
-        const top = parseFloat(wakeButton?.style.top);
-        if (Number.isFinite(left) && Number.isFinite(top)) {
-          wakeFullscreenPos = { left, top };
-          saveState({ wakeFullscreen: { left, top } });
-        }
+      saveState({ panel: currentPanel });
+      suppressWakeClick = true;
+      suppressWakeClickTimer = window.setTimeout(() => {
+        suppressWakeClick = false;
+        suppressWakeClickTimer = 0;
+      }, 500);
+    }
+  }
+
+  function handleWakeClick(event) {
+    if (suppressWakeClick) {
+      suppressWakeClick = false;
+      if (suppressWakeClickTimer) {
+        window.clearTimeout(suppressWakeClickTimer);
+        suppressWakeClickTimer = 0;
       }
-    } else if (mode === 'floating') {
-      // 浮窗模式：未拖动则唤醒面板；全屏模式交由 click 事件处理隐藏/显示切换
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (
+      displayMode !== 'fullscreen'
+      && panel?.dataset.minimized === 'true'
+    ) {
       wakePanel();
     }
   }
@@ -1256,6 +1245,11 @@
     dragSession = null;
     resizeSession = null;
     wakeDragSession = null;
+    suppressWakeClick = false;
+    if (suppressWakeClickTimer) {
+      window.clearTimeout(suppressWakeClickTimer);
+      suppressWakeClickTimer = 0;
+    }
   }
 
   function getFrameTargetUrl() {
@@ -1264,6 +1258,12 @@
       target.searchParams.set('surface', 'embed');
       target.searchParams.set('components', surfaceComponents.length ? surfaceComponents.join(',') : 'none');
       target.searchParams.set('chat_mode', chatSurfaceMode);
+      if (avatarForm === 'cat') {
+        target.searchParams.set('avatar_form', 'cat');
+        if (avatarFormRequestId) {
+          target.searchParams.set('avatar_request_id', avatarFormRequestId);
+        }
+      }
     }
     return target.toString();
   }
@@ -1417,6 +1417,8 @@
       protocolVersion: EMBED_PROTOCOL_VERSION,
       components: surfaceComponents.slice(),
       chatMode: chatSurfaceMode,
+      avatarForm,
+      avatarFormRequestId,
       requestId: `connect-${Date.now()}`
     });
   }
@@ -1454,6 +1456,20 @@
 
     if (data.type === 'NEKO_EMBED_COMPONENTS_CHANGED') {
       postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+      return;
+    }
+
+    if (data.type === 'NEKO_EMBED_AVATAR_FORM_STATE') {
+      const nextAvatarForm = normalizeAvatarForm(data.avatarForm);
+      if (data.status === 'applied') {
+        setAvatarForm(nextAvatarForm, false);
+        chrome.runtime.sendMessage({
+          type: 'NEKO_AVATAR_FORM_STATE',
+          avatarForm: nextAvatarForm,
+          visible: data.visible === true,
+          requestId: data.avatarFormRequestId || null
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -1629,6 +1645,7 @@
   function createHost() {
     const nextHost = document.createElement('div');
     nextHost.id = HOST_ID;
+    nextHost.dataset.nekoContentRuntimeId = CONTENT_RUNTIME_ID;
     nextHost.style.all = 'initial';
     nextHost.style.position = 'fixed';
     nextHost.style.inset = '0';
@@ -1714,39 +1731,6 @@
     target.style.bottom = `${nextPanel.bottom}px`;
   }
 
-  function normalizeWakeFullscreenPos(value) {
-    if (!value || typeof value !== 'object') {
-      return null;
-    }
-    const left = Math.round(Number(value.left));
-    const top = Math.round(Number(value.top));
-    if (!Number.isFinite(left) || !Number.isFinite(top)) {
-      return null;
-    }
-    const size = 72;
-    const maxLeft = Math.max(0, window.innerWidth - size);
-    const maxTop = Math.max(0, window.innerHeight - size);
-    return {
-      left: Math.max(0, Math.min(left, maxLeft)),
-      top: Math.max(0, Math.min(top, maxTop))
-    };
-  }
-
-  function applyWakeFullscreenPos() {
-    if (!wakeButton) {
-      return;
-    }
-    if (displayMode === 'fullscreen' && wakeFullscreenPos) {
-      wakeButton.style.left = `${wakeFullscreenPos.left}px`;
-      wakeButton.style.top = `${wakeFullscreenPos.top}px`;
-      wakeButton.style.right = 'auto';
-    } else {
-      wakeButton.style.left = '';
-      wakeButton.style.top = '';
-      wakeButton.style.right = '';
-    }
-  }
-
   function normalizePanel(nextPanel) {
     const maxWidth = Math.max(MIN_SIZE.width, Math.floor(window.innerWidth * 0.9));
     const maxHeight = Math.max(MIN_SIZE.height, Math.floor(window.innerHeight * 0.9));
@@ -1780,7 +1764,8 @@
     return {
       visible: isPanelVisible(),
       minimized,
-      awake: isPanelVisible() && !minimized
+      awake: isPanelVisible() && !minimized,
+      avatarForm
     };
   }
 
@@ -1789,6 +1774,26 @@
       return mode;
     }
     return 'floating';
+  }
+
+  function normalizeAvatarForm(value) {
+    return value === 'cat' ? 'cat' : 'model';
+  }
+
+  function setAvatarForm(value, persist) {
+    const nextAvatarForm = normalizeAvatarForm(value);
+    if (nextAvatarForm === 'cat') {
+      if (avatarForm !== 'cat' || !avatarFormRequestId) {
+        avatarFormRequestId = `avatar-form-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      }
+    } else {
+      avatarFormRequestId = null;
+    }
+    avatarForm = nextAvatarForm;
+    if (persist) {
+      saveState({ avatarForm });
+    }
+    return avatarForm;
   }
 
   function isEmbeddedDisplayMode(mode) {
