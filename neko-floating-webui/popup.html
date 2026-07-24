@@ -2,211 +2,218 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <style>
-    body {
-      width: 292px;
-      margin: 0;
-      font: 13px "Segoe UI", Arial, sans-serif;
-      color: #0f172a;
-    }
-    .section { padding: 12px 12px 14px; }
-    .section + .section { border-top: 1px solid rgba(15, 23, 42, 0.1); }
-    h3 {
-      margin: 0 0 8px;
-      font-size: 11px;
-      font-weight: 700;
-      color: #475569;
-      text-transform: uppercase;
-      letter-spacing: .04em;
-    }
-    .modes { display: flex; gap: 6px; }
-    .modes button {
-      flex: 1;
-      padding: 9px 0;
-      border: 1px solid rgba(15, 23, 42, 0.14);
-      border-radius: 6px;
-      background: #ffffff;
-      cursor: pointer;
-      font: inherit;
-      color: inherit;
-    }
-    .modes button:hover {
-      background: #eef2ff;
-      border-color: rgba(79, 70, 229, 0.32);
-    }
-    .modes button.active {
-      background: #eef2ff;
-      border-color: rgba(79, 70, 229, 0.45);
-      color: #4338ca;
-      font-weight: 600;
-    }
-    button:disabled {
-      cursor: wait;
-      opacity: .55;
-    }
-    .toggle {
-      display: block;
-      width: 100%;
-      margin-top: 12px;
-      padding: 10px 0;
-      border: 0;
-      border-radius: 6px;
-      background: #4f46e5;
-      color: #ffffff;
-      font: 600 13px "Segoe UI", Arial, sans-serif;
-      cursor: pointer;
-    }
-    .toggle:hover { background: #4338ca; }
-    .permission-button { margin-top: 0; }
-    .permission-button[data-state="granted"] {
-      background: #15803d;
-    }
-    .permission-button[data-state="granted"]:hover {
-      background: #166534;
-    }
-    .permission-button[data-state="denied"] {
-      background: #b91c1c;
-    }
-    .permission-button[data-state="denied"]:hover {
-      background: #991b1b;
-    }
-    .components {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px 10px;
-    }
-    .component-option {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-      cursor: pointer;
-      user-select: none;
-    }
-    .component-option input { margin: 0; }
-    .component-option span {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .hint {
-      margin: 10px 0 0;
-      font-size: 11px;
-      color: #64748b;
-      line-height: 1.45;
-    }
-    .error {
-      margin: 8px 0 0;
-      color: #b91c1c;
-      font-size: 11px;
-      line-height: 1.4;
-    }
-    .error[hidden] { display: none; }
-    .setting-select {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 8px 9px;
-      border: 1px solid rgba(15, 23, 42, 0.14);
-      border-radius: 6px;
-      background: #ffffff;
-      color: inherit;
-      font: inherit;
-    }
-    .setting-input {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 8px 9px;
-      border: 1px solid rgba(15, 23, 42, 0.14);
-      border-radius: 6px;
-      background: #ffffff;
-      color: inherit;
-      font: inherit;
-    }
-    .setting-input:focus,
-    .setting-select:focus {
-      outline: 2px solid rgba(79, 70, 229, 0.2);
-      border-color: rgba(79, 70, 229, 0.55);
-    }
-    .setting-actions {
-      display: flex;
-      gap: 6px;
-      margin-top: 8px;
-    }
-    .setting-actions button {
-      flex: 1;
-      padding: 8px 9px;
-      border: 1px solid rgba(15, 23, 42, 0.14);
-      border-radius: 6px;
-      background: #ffffff;
-      color: inherit;
-      cursor: pointer;
-      font: inherit;
-    }
-    .setting-actions .primary {
-      border-color: #4f46e5;
-      background: #4f46e5;
-      color: #ffffff;
-      font-weight: 600;
-    }
-    .setting-actions button:hover { background: #eef2ff; }
-    .setting-actions .primary:hover { background: #4338ca; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project N.E.K.O. 猫娘菜单</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="section">
-    <h3>前端地址</h3>
-    <input
-      class="setting-input"
-      id="webui-url"
-      type="url"
-      inputmode="url"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder="http://localhost:48911/"
-      aria-label="N.E.K.O 前端地址"
-    >
-    <div class="setting-actions">
-      <button type="button" class="primary" id="save-webui-url">应用地址</button>
-      <button type="button" id="reset-webui-url">恢复默认</button>
-    </div>
-    <p class="hint" id="webui-url-hint">保存后会立即重载当前面板；自定义服务必须允许被 iframe 嵌入。</p>
-    <p class="error" id="error" role="alert" hidden></p>
-  </div>
-  <div class="section">
-    <h3>麦克风权限</h3>
-    <button type="button" class="toggle permission-button" id="authorize-microphone" data-state="unknown">授权麦克风</button>
-    <p class="hint" id="microphone-permission-hint">点击后会打开独立授权页，用于浮窗和全屏的扩展麦克风中继。</p>
-  </div>
-  <div class="section">
-    <h3>显示模式</h3>
-    <div class="modes">
-      <button type="button" data-mode="floating">浮窗</button>
-      <button type="button" data-mode="fullscreen">全屏</button>
-      <button type="button" data-mode="sidebar">侧栏</button>
-    </div>
-    <button type="button" class="toggle" id="toggle">显示 / 隐藏面板</button>
-    <p class="hint" id="hint">全屏显示时可点击和拖动 Live2D；需要操作原网页时，点击右上角胶囊隐藏叠加层。</p>
-  </div>
-  <div class="section">
-    <h3>聊天框模式</h3>
-    <select class="setting-select" id="chat-surface-mode">
-      <option value="auto">跟随页面</option>
-      <option value="compact">固定小聊天框</option>
-      <option value="full">固定大聊天框</option>
-    </select>
-    <p class="hint" id="chat-mode-hint">应用于浮窗和全屏页面。</p>
-  </div>
-  <div class="section">
-    <h3>界面组件</h3>
-    <div class="components" id="components">
-      <label class="component-option"><input type="checkbox" data-surface-component="avatar"><span>模型</span></label>
-      <label class="component-option"><input type="checkbox" data-surface-component="chat"><span>聊天框</span></label>
-      <label class="component-option"><input type="checkbox" data-surface-component="subtitle"><span>字幕</span></label>
-      <label class="component-option"><input type="checkbox" data-surface-component="controls"><span>模型按钮</span></label>
-      <label class="component-option"><input type="checkbox" data-surface-component="agent-hud"><span>任务 HUD</span></label>
-      <label class="component-option"><input type="checkbox" data-surface-component="status"><span>状态提示</span></label>
-    </div>
-    <p class="hint" id="components-hint">开关会立即同步到当前浮窗或全屏页面，并在下次打开时保留。</p>
+  <div class="popup-shell">
+    <header class="hero">
+      <div class="hero-brand">
+        <div>
+          <h1>猫娘菜单</h1>
+          <div class="hero-kicker">PROJECT N.E.K.O.</div>
+        </div>
+      </div>
+      <div class="hero-meta" title="WebUI 快捷控制">
+        <span class="hero-status-dot" aria-hidden="true"></span>
+        <span>WebUI</span>
+      </div>
+    </header>
+
+    <main class="settings">
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-icon">
+            <img src="assets/ui/api_key_icon.png" alt="" aria-hidden="true">
+          </span>
+          <div>
+            <h3>前端地址</h3>
+            <span>连接 N.E.K.O 服务</span>
+          </div>
+        </div>
+        <input
+          class="setting-input"
+          id="webui-url"
+          type="url"
+          inputmode="url"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="http://localhost:48911/"
+          aria-label="N.E.K.O 前端地址"
+        >
+        <div class="setting-actions">
+          <button type="button" class="primary" id="save-webui-url">应用地址</button>
+          <button type="button" id="reset-webui-url">恢复默认</button>
+        </div>
+        <p class="hint" id="webui-url-hint">保存后会立即重载当前面板；自定义服务必须允许被 iframe 嵌入。</p>
+        <p class="error" id="error" role="alert" hidden></p>
+      </section>
+
+      <section class="section section-permission">
+        <div class="section-heading">
+          <span class="section-icon section-icon-round">
+            <img src="assets/ui/mic_icon_on.png" alt="" aria-hidden="true">
+          </span>
+          <div>
+            <h3>麦克风权限</h3>
+            <span>浮窗与全屏语音中继</span>
+          </div>
+        </div>
+        <button type="button" class="toggle permission-button" id="authorize-microphone" data-state="unknown">授权麦克风</button>
+        <p class="hint" id="microphone-permission-hint">点击后会打开独立授权页，用于浮窗和全屏的扩展麦克风中继。</p>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-icon section-icon-round">
+            <img src="assets/ui/expand_icon_off.png" alt="" aria-hidden="true">
+          </span>
+          <div>
+            <h3>显示模式</h3>
+            <span>选择 WebUI 的承载方式</span>
+          </div>
+        </div>
+        <div class="modes" data-active-mode="floating">
+          <span class="modes-indicator" aria-hidden="true"></span>
+          <button type="button" class="active" data-mode="floating">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="6" width="13" height="11" rx="2"></rect>
+              <path d="M8 6V4.8c0-1 .8-1.8 1.8-1.8h8.4c1 0 1.8.8 1.8 1.8v7.4c0 1-.8 1.8-1.8 1.8H17"></path>
+            </svg>
+            <span>浮窗</span>
+          </button>
+          <button type="button" data-mode="fullscreen">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 4H4v4M16 4h4v4M20 16v4h-4M8 20H4v-4"></path>
+            </svg>
+            <span>全屏</span>
+          </button>
+          <button type="button" data-mode="sidebar">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+              <path d="M15 4v16"></path>
+            </svg>
+            <span>侧栏</span>
+          </button>
+        </div>
+        <button type="button" class="toggle" id="toggle">显示 / 隐藏面板</button>
+        <p class="hint" id="hint">全屏显示时可点击和拖动 Live2D；需要操作原网页时，点击右上角胶囊隐藏叠加层。</p>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-icon">
+            <img src="assets/ui/chat_icon.png" alt="" aria-hidden="true">
+          </span>
+          <div>
+            <h3>聊天框模式</h3>
+            <span>控制对话窗口的默认形态</span>
+          </div>
+        </div>
+        <div class="chat-mode-dropdown" id="chat-mode-dropdown">
+          <select class="setting-select is-enhanced" id="chat-surface-mode" tabindex="-1" aria-hidden="true">
+            <option value="auto">跟随页面</option>
+            <option value="compact">固定小聊天框</option>
+            <option value="full">固定大聊天框</option>
+          </select>
+          <button
+            type="button"
+            class="chat-mode-dropdown-trigger"
+            id="chat-mode-dropdown-trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="chat-mode-dropdown-menu"
+          >
+            <span class="chat-mode-dropdown-icon">
+              <img src="assets/ui/chat_icon.png" alt="" aria-hidden="true">
+            </span>
+            <span class="chat-mode-dropdown-current">跟随页面</span>
+            <span class="chat-mode-dropdown-arrow" aria-hidden="true"></span>
+          </button>
+          <div class="chat-mode-dropdown-menu" id="chat-mode-dropdown-menu" role="listbox" hidden>
+            <button type="button" class="chat-mode-dropdown-option selected" role="option" data-value="auto" aria-selected="true">
+              <span class="chat-mode-dropdown-option-copy">
+                <strong>跟随页面</strong>
+                <small>使用页面自身的聊天框设置</small>
+              </span>
+              <span class="chat-mode-dropdown-check" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="chat-mode-dropdown-option" role="option" data-value="compact" aria-selected="false">
+              <span class="chat-mode-dropdown-option-copy">
+                <strong>固定小聊天框</strong>
+                <small>始终使用紧凑聊天框</small>
+              </span>
+              <span class="chat-mode-dropdown-check" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="chat-mode-dropdown-option" role="option" data-value="full" aria-selected="false">
+              <span class="chat-mode-dropdown-option-copy">
+                <strong>固定大聊天框</strong>
+                <small>始终使用完整聊天框</small>
+              </span>
+              <span class="chat-mode-dropdown-check" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <p class="hint" id="chat-mode-hint">应用于浮窗和全屏页面。</p>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <span class="section-icon section-icon-round">
+            <img src="assets/ui/set_on.png" alt="" aria-hidden="true">
+          </span>
+          <div>
+            <h3>界面组件</h3>
+            <span>选择要呈现的本体元素</span>
+          </div>
+        </div>
+        <div class="components" id="components">
+          <label class="component-option">
+            <input type="checkbox" data-surface-component="avatar" checked>
+            <span class="component-visual"><img src="assets/ui/live2d_model_select_icon.png" alt=""></span>
+            <span class="component-name">模型</span>
+            <span class="component-switch" aria-hidden="true"></span>
+          </label>
+          <label class="component-option">
+            <input type="checkbox" data-surface-component="chat" checked>
+            <span class="component-visual"><img src="assets/ui/chat_icon.png" alt=""></span>
+            <span class="component-name">聊天框</span>
+            <span class="component-switch" aria-hidden="true"></span>
+          </label>
+          <label class="component-option">
+            <input type="checkbox" data-surface-component="subtitle" checked>
+            <span class="component-visual"><img src="assets/ui/translate_icon.png" alt=""></span>
+            <span class="component-name">字幕</span>
+            <span class="component-switch" aria-hidden="true"></span>
+          </label>
+          <label class="component-option">
+            <input type="checkbox" data-surface-component="controls" checked>
+            <span class="component-visual"><img src="assets/ui/set_on.png" alt=""></span>
+            <span class="component-name">模型按钮</span>
+            <span class="component-switch" aria-hidden="true"></span>
+          </label>
+          <label class="component-option">
+            <input type="checkbox" data-surface-component="agent-hud" checked>
+            <span class="component-visual"><img src="assets/ui/Agent_on.png" alt=""></span>
+            <span class="component-name">任务 HUD</span>
+            <span class="component-switch" aria-hidden="true"></span>
+          </label>
+          <label class="component-option">
+            <input type="checkbox" data-surface-component="status" checked>
+            <span class="component-visual"><img src="assets/ui/reminder_icon.png" alt=""></span>
+            <span class="component-name">状态提示</span>
+            <span class="component-switch" aria-hidden="true"></span>
+          </label>
+        </div>
+        <p class="hint" id="components-hint">开关会立即同步到当前浮窗或全屏页面，并在下次打开时保留。</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <img src="assets/ui/paw_ui.png" alt="" aria-hidden="true">
+      <span>Project N.E.K.O. · Browser companion</span>
+    </footer>
   </div>
   <script src="popup.js"></script>
 </body>

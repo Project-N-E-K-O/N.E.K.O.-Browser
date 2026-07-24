@@ -7,9 +7,20 @@ const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
 const background = read('background.js');
 const popupHtml = read('popup.html');
 const popup = read('popup.js');
+const popupCss = read('popup.css');
 const content = read('content.js');
+const manifest = JSON.parse(read('manifest.json'));
 
 const components = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
+
+test('browser surfaces use PNG variants generated from the N.E.K.O tray icon', () => {
+  for (const size of [16, 32, 48, 128]) {
+    const iconPath = `assets/ui/icon_systray_${size}.png`;
+    assert.equal(manifest.icons[String(size)], iconPath);
+    assert.equal(manifest.action.default_icon[String(size)], iconPath);
+    assert.ok(fs.existsSync(path.join(__dirname, iconPath)));
+  }
+});
 
 test('popup exposes one checkbox for every canonical surface component', () => {
   for (const component of components) {
@@ -26,6 +37,52 @@ test('popup persists component changes without closing itself', () => {
   assert.match(popup, /currentComponents = normalizeSurfaceComponents/);
   assert.match(popup, /当前浮窗页面/);
   assert.match(popup, /当前全屏页面/);
+});
+
+test('display mode selector slides its indicator and stays open after switching', () => {
+  assert.match(popupHtml, /class="modes" data-active-mode="floating"/);
+  assert.match(popupHtml, /class="modes-indicator"/);
+  assert.match(popup, /modesEl\.dataset\.activeMode = currentMode/);
+  assert.match(popupCss, /\.modes\.is-ready \.modes-indicator/);
+  assert.match(popupCss, /translateX\(calc\(200% \+ 8px\)\)/);
+
+  const modeClickMarker = popup.indexOf("btn.addEventListener('click'");
+  const modeHandlerStart = popup.lastIndexOf('modeButtons.forEach', modeClickMarker);
+  const modeHandlerEnd = popup.indexOf("toggleButton.addEventListener", modeHandlerStart);
+  const modeHandler = popup.slice(modeHandlerStart, modeHandlerEnd);
+  assert.ok(modeClickMarker >= 0 && modeHandlerStart >= 0 && modeHandlerEnd > modeHandlerStart);
+  assert.match(modeHandler, /currentMode = mode/);
+  assert.doesNotMatch(modeHandler, /window\.close\(\)/);
+});
+
+test('feature panels use a simple hover lift on fine pointers', () => {
+  assert.match(popup, /setupPanelHover\(\)/);
+  assert.match(popup, /matchMedia\('\(hover: hover\) and \(pointer: fine\)'\)/);
+  assert.match(popupCss, /@media \(hover: hover\) and \(pointer: fine\)/);
+  assert.match(popupCss, /\.section-hover-zone:hover \.section/);
+  assert.match(popupCss, /--panel-lift: -3px/);
+  assert.match(popupCss, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(popupCss, /rotate[XY]\(|perspective\(/);
+  assert.doesNotMatch(popup, /pointermove|--panel-rotate/);
+});
+
+test('panel hover uses a stationary zone instead of its shifted bounds', () => {
+  assert.match(popup, /hoverZone\.className = 'section-hover-zone'/);
+  assert.match(popup, /section\.parentNode\.insertBefore\(hoverZone, section\)/);
+  assert.match(popupCss, /\.section-hover-zone/);
+});
+
+test('popup uses a compact single-row title bar', () => {
+  assert.match(popupHtml, /<header class="hero">/);
+  assert.match(popupHtml, /<title>Project N\.E\.K\.O\. 猫娘菜单<\/title>/);
+  assert.match(popupHtml, /<h1>猫娘菜单<\/h1>/);
+  assert.match(popupHtml, /<div class="hero-meta" title="WebUI 快捷控制">/);
+  assert.doesNotMatch(popupHtml, /hero-logo|hero-paws|hero-badge/);
+  assert.match(popupCss, /\.hero \{[\s\S]*display: flex;[\s\S]*min-height: 54px;/);
+  assert.match(popupCss, /\.hero::before \{[\s\S]*url\("assets\/ui\/icon_systray\.ico"\)/);
+  assert.match(popupCss, /\.hero::before \{[\s\S]*opacity: 0\.52;/);
+  assert.doesNotMatch(popupCss, /\.hero-brand \{[^}]*margin-left:/);
+  assert.doesNotMatch(popupCss, /\.hero-logo|\.hero::after|\.hero-paws|\.hero-badge/);
 });
 
 test('background normalizes, stores, and forwards component state', () => {
@@ -60,4 +117,23 @@ test('popup can persist a fixed compact or full chat surface mode', () => {
   assert.match(background, /type: 'NEKO_APPLY_CHAT_SURFACE_MODE'/);
   assert.match(content, /message\.type === 'NEKO_APPLY_CHAT_SURFACE_MODE'/);
   assert.match(content, /type: 'NEKO_EMBED_SET_CHAT_MODE'/);
+});
+
+test('chat surface mode uses a host-style custom dropdown over the native value control', () => {
+  assert.match(popupHtml, /class="setting-select is-enhanced" id="chat-surface-mode"/);
+  assert.match(popupHtml, /class="chat-mode-dropdown-trigger"/);
+  assert.match(popupHtml, /class="chat-mode-dropdown-menu"/);
+  assert.equal((popupHtml.match(/class="chat-mode-dropdown-option(?: selected)?"/g) || []).length, 3);
+  assert.match(popup, /setChatModeDropdownOpen/);
+  assert.match(popup, /syncChatModeDropdown/);
+  assert.match(popup, /aria-selected/);
+  assert.match(popup, /event\.key === 'ArrowDown'/);
+  assert.match(popup, /event\.key === 'Escape'/);
+  assert.match(popupCss, /\.chat-mode-dropdown-trigger/);
+  assert.match(popupCss, /\.chat-mode-dropdown\.open \{[\s\S]*z-index: 40;/);
+  assert.match(popupCss, /\.chat-mode-dropdown-option\.selected/);
+  assert.match(popupCss, /\.chat-mode-dropdown-menu \{[\s\S]*background: #fff;/);
+  assert.match(popupCss, /background: #19242f;/);
+  assert.doesNotMatch(popupCss, /\.chat-mode-dropdown-menu \{[\s\S]*?backdrop-filter:/);
+  assert.match(popupCss, /chat-mode-menu-enter/);
 });
