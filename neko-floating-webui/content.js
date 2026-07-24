@@ -1736,8 +1736,12 @@
     const maxHeight = Math.max(MIN_SIZE.height, Math.floor(window.innerHeight * 0.9));
     const width = Math.min(maxWidth, Math.max(MIN_SIZE.width, Math.round(Number(nextPanel.width) || DEFAULT_STATE.panel.width)));
     const height = Math.min(maxHeight, Math.max(MIN_SIZE.height, Math.round(Number(nextPanel.height) || DEFAULT_STATE.panel.height)));
-    const right = Math.max(8, Math.min(Math.round(Number(nextPanel.right) || DEFAULT_STATE.panel.right), window.innerWidth - 80));
-    const bottom = Math.max(8, Math.min(Math.round(Number(nextPanel.bottom) || DEFAULT_STATE.panel.bottom), window.innerHeight - 48));
+    const maxRight = Math.max(8, window.innerWidth - width - 8);
+    const maxBottom = Math.max(8, window.innerHeight - height - 8);
+    const rawRight = Number(nextPanel.right);
+    const rawBottom = Number(nextPanel.bottom);
+    const right = Math.max(8, Math.min(Math.round(Number.isFinite(rawRight) ? rawRight : DEFAULT_STATE.panel.right), maxRight));
+    const bottom = Math.max(8, Math.min(Math.round(Number.isFinite(rawBottom) ? rawBottom : DEFAULT_STATE.panel.bottom), maxBottom));
     return { width, height, right, bottom };
   }
 

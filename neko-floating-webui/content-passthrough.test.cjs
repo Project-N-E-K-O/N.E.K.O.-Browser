@@ -109,6 +109,32 @@ test('switching between floating and fullscreen reflows the live WebUI without r
   assert.doesNotMatch(block, /reloadFrameBridge|NEKO_FLOATING_FRAME_RELOAD/);
 });
 
+test('expanded floating panels cannot cross the left or top viewport edge', () => {
+  const block = functionBlock('normalizePanel', 'clampMinimizedPanelPosition').trim();
+  const normalizePanel = new Function(
+    'MIN_SIZE',
+    'DEFAULT_STATE',
+    'window',
+    `${block}; return normalizePanel;`
+  )(
+    { width: 320, height: 420 },
+    { panel: { width: 420, height: 680, right: 24, bottom: 24 } },
+    { innerWidth: 800, innerHeight: 600 }
+  );
+
+  assert.deepEqual(normalizePanel({
+    width: 420,
+    height: 500,
+    right: 9999,
+    bottom: 9999
+  }), {
+    width: 420,
+    height: 500,
+    right: 372,
+    bottom: 92
+  });
+});
+
 test('a collapsed floating surface becomes a live fullscreen surface requesting the host cat form', () => {
   assert.match(
     background,
