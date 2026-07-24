@@ -123,6 +123,11 @@ test('a connect message without avatar state preserves the URL avatar request', 
     connectHandler[0],
     /if \(data\.avatarForm !== undefined\) \{\s*requestAvatarForm\(data\.avatarForm, data\.avatarFormRequestId, 'parent-connect'\);\s*\}/
   );
+  assert.equal(
+    (connectHandler[0].match(/\brequestAvatarForm\(/g) || []).length,
+    1,
+    'connect handler must not issue an unconditional avatar request'
+  );
 });
 
 test('component visibility and hit testing stay in extension-owned assets', () => {

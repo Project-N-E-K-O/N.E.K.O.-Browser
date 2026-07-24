@@ -168,7 +168,7 @@ test('fullscreen transfer state survives awake status updates until an explicit 
 test('ordinary display mode changes intentionally restore the model form', () => {
   assert.match(
     background,
-    /const avatarForm = transferCollapsedFloatingToFullscreen\s*\? 'cat'[\s\S]*?: \(restoreCollapsedFloating \? 'cat' : 'model'\);/
+    /const avatarForm = transferCollapsedFloatingToFullscreen\s*\?\s*'cat'\s*:\s*\(restoreCollapsedFloating\s*\?\s*'cat'\s*:\s*'model'\);/
   );
 });
 
