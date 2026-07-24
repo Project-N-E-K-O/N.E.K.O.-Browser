@@ -48,15 +48,12 @@ test('component switches use strict canonical names and update a live embed', ()
   assert.match(loadBlock, /startEmbeddedSurfaceHandshake\(\)/);
 });
 
-test('manual iframe reload uses one direct WebUI navigation without an about:blank hop', () => {
+test('manual reload stays inside the extension frame bridge', () => {
   const block = functionBlock('handleAction', 'setRoutesOpen');
-  const resetIndex = block.indexOf("resetEmbedPassthrough('manual-reload')");
-  const navigateIndex = block.indexOf('frame.src = target');
-  assert.notEqual(resetIndex, -1);
-  assert.notEqual(navigateIndex, -1);
-  assert.ok(resetIndex < navigateIndex, 'the old embed handshake must reset before navigation');
-  assert.equal((block.match(/frame\.src\s*=/g) || []).length, 1);
-  assert.doesNotMatch(block, /frame\.src\s*=\s*['"]about:blank['"]/);
+  assert.match(block, /resetEmbedPassthrough\('manual-reload'\)/);
+  assert.match(block, /type: 'NEKO_FLOATING_FRAME_RELOAD'/);
+  assert.match(block, /reloadFrameBridge\(\)/);
+  assert.doesNotMatch(block, /frame\.src\s*=\s*getFrameTargetUrl\(\)/);
 });
 
 test('fullscreen iframe is click-through until an interactive region is selected', () => {
@@ -103,8 +100,9 @@ test('a missing or incompatible injected adapter falls back to an interactive if
   assert.match(block, /setFrameInteractive\(true, 'legacy-fallback'\)/);
 });
 
-test('messages are restricted to the current WebUI frame and origin', () => {
+test('messages are restricted to the current extension bridge frame and origin', () => {
   assert.match(source, /event\.source !== frame\.contentWindow/);
-  assert.match(source, /event\.origin !== getWebuiOrigin\(\)/);
+  assert.match(source, /event\.origin !== FRAME_BRIDGE_ORIGIN/);
+  assert.match(source, /data\._sender === FRAME_BRIDGE_SENDER/);
   assert.match(source, /data\._sender === 'neko-embedded-surface'/);
 });

@@ -8,6 +8,9 @@
   const MIN_SIZE = { width: 320, height: 420 };
   const WAKE_DRAG_THRESHOLD = 4;
   const WAKE_IMAGE_URL = chrome.runtime.getURL('assets/cat-idle-cat1.gif');
+  const FRAME_BRIDGE_URL = chrome.runtime.getURL('floating-frame.html');
+  const FRAME_BRIDGE_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
+  const FRAME_BRIDGE_SENDER = 'neko-floating-frame-bridge';
   const EMBED_PROTOCOL_VERSION = 1;
   const EMBED_PROTOCOL_FALLBACK_MS = 1500;
   const EMBED_SURFACE_COMPONENT_ORDER = Object.freeze([
@@ -68,6 +71,8 @@
 
   const activePcmRelays = new Set();
   let pcmWebuiPort = null;
+  let frameBridgeReady = false;
+  let frameWebuiReady = false;
   let embedReady = false;
   let embedConnectSent = false;
   let embedRegions = [];
@@ -180,11 +185,15 @@
     if (!frame || event.source !== frame.contentWindow) {
       return;
     }
-    if (event.origin !== getWebuiOrigin()) {
+    if (event.origin !== FRAME_BRIDGE_ORIGIN) {
       return;
     }
     const data = event.data;
     if (!data || typeof data.type !== 'string') {
+      return;
+    }
+    if (data._sender === FRAME_BRIDGE_SENDER) {
+      handleFrameBridgeMessage(data);
       return;
     }
     if (data._sender === 'neko-embedded-surface') {
@@ -836,9 +845,11 @@
       if (offlineEl) offlineEl.hidden = true;
       setOnline(null);
       if (frame) {
-        const target = getFrameTargetUrl();
         resetEmbedPassthrough('manual-reload');
-        frame.src = target;
+        frameWebuiReady = false;
+        if (!postFrameBridgeMessage({ type: 'NEKO_FLOATING_FRAME_RELOAD' })) {
+          reloadFrameBridge();
+        }
       }
       checkHealth();
       return;
@@ -888,20 +899,7 @@
   }
 
   function isFrameReadyForWebui() {
-    if (!frame) {
-      return false;
-    }
-    try {
-      if (new URL(frame.src).origin !== getWebuiOrigin()) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-    // frame.src 是 localhost，但需确认实际加载了跨域文档：
-    // about:blank 继承父域时 contentDocument 可访问（非 null）；
-    // localhost 跨域加载成功时 contentDocument 为 null。
-    return frame.contentDocument === null;
+    return Boolean(frame?.contentWindow && frameBridgeReady && frameWebuiReady);
   }
 
   function onWebuiLoad() {
@@ -924,11 +922,7 @@
         if (!isFrameReadyForWebui()) {
           return;
         }
-        try {
-          frame.contentWindow?.postMessage({
-            type: 'NEKO_FLOATING_WEBUI_REFLOW'
-          }, getWebuiOrigin());
-        } catch {}
+        postFrameBridgeMessage({ type: 'NEKO_FLOATING_WEBUI_REFLOW' });
       }, delay);
     });
   }
@@ -966,18 +960,20 @@
       return;
     }
     syncFrameColorScheme();
-    const target = getFrameTargetUrl();
     try {
       const current = frame.src;
-      if (current && new URL(current).toString() === new URL(target).toString()) {
-        if (!embedReady && isEmbeddedSurfaceActive()) {
+      if (current && new URL(current).toString() === new URL(FRAME_BRIDGE_URL).toString()) {
+        if (frameBridgeReady && !frameWebuiReady) {
+          loadWebuiThroughFrameBridge();
+        } else if (!embedReady && isEmbeddedSurfaceActive() && frameWebuiReady) {
           startEmbeddedSurfaceHandshake();
         }
         return;
       }
     } catch {}
     resetEmbedPassthrough('frame-navigation');
-    frame.src = target;
+    resetFrameBridgeState();
+    frame.src = FRAME_BRIDGE_URL;
   }
 
   function unloadFrame() {
@@ -985,6 +981,7 @@
       return;
     }
     resetEmbedPassthrough('frame-unload');
+    resetFrameBridgeState();
     try { frame.src = 'about:blank'; } catch {}
     frame.removeAttribute('src');
   }
@@ -1268,6 +1265,66 @@
     return target.toString();
   }
 
+  function resetFrameBridgeState() {
+    frameBridgeReady = false;
+    frameWebuiReady = false;
+  }
+
+  function reloadFrameBridge() {
+    if (!frame) {
+      return;
+    }
+    resetFrameBridgeState();
+    try { frame.src = 'about:blank'; } catch {}
+    frame.src = FRAME_BRIDGE_URL;
+  }
+
+  function loadWebuiThroughFrameBridge() {
+    if (!frameBridgeReady) {
+      return false;
+    }
+    frameWebuiReady = false;
+    return postFrameBridgeMessage({
+      type: 'NEKO_FLOATING_FRAME_LOAD',
+      targetUrl: getFrameTargetUrl(),
+      colorScheme: syncFrameColorScheme()
+    });
+  }
+
+  function postFrameBridgeMessage(payload, transfer = []) {
+    if (!frame?.contentWindow || !frameBridgeReady) {
+      return false;
+    }
+    try {
+      frame.contentWindow.postMessage(payload, FRAME_BRIDGE_ORIGIN, transfer);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function handleFrameBridgeMessage(data) {
+    if (data.type === 'NEKO_FLOATING_FRAME_READY') {
+      frameBridgeReady = true;
+      frameWebuiReady = false;
+      loadWebuiThroughFrameBridge();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED') {
+      if (data.targetUrl !== getFrameTargetUrl()) {
+        loadWebuiThroughFrameBridge();
+        return;
+      }
+      frameWebuiReady = true;
+      onWebuiLoad();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_ERROR') {
+      frameWebuiReady = false;
+      setOnline(false);
+    }
+  }
+
   function isEmbeddedSurfaceActive() {
     return Boolean(
       isEmbeddedDisplayMode(displayMode)
@@ -1336,9 +1393,7 @@
     if (!isFrameReadyForWebui()) {
       return;
     }
-    try {
-      frame?.contentWindow?.postMessage(payload, getWebuiOrigin());
-    } catch {}
+    postFrameBridgeMessage(payload);
   }
 
   function handleEmbedMessage(data) {
@@ -1588,6 +1643,12 @@
       frame.style.setProperty('color-scheme', scheme);
       frame.dataset.nekoEmbeddingColorScheme = scheme;
     }
+    if (frameBridgeReady) {
+      postFrameBridgeMessage({
+        type: 'NEKO_FLOATING_FRAME_COLOR_SCHEME',
+        colorScheme: scheme
+      });
+    }
     return scheme;
   }
 
@@ -1824,10 +1885,13 @@
       return;
     }
     try {
-      frame.contentWindow.postMessage({
+      const sent = postFrameBridgeMessage({
         type: 'NEKO_PCM_PORT',
         _sender: 'floating'
-      }, getWebuiOrigin(), [channel.port2]);
+      }, [channel.port2]);
+      if (!sent) {
+        throw new Error('Floating frame bridge is not ready');
+      }
       console.log('[NEKO-MIC content] PCM MessagePort sent');
     } catch {
       try { pcmWebuiPort.close(); } catch {}
@@ -1836,26 +1900,7 @@
   }
 
   function isWebuiFrameReadyForMessaging() {
-    if (!frame?.contentWindow) {
-      return false;
-    }
-    const expectedOrigin = getWebuiOrigin();
-    try {
-      if (new URL(frame.src).origin !== expectedOrigin) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-    try {
-      const currentHref = frame.contentWindow.location.href;
-      if (!currentHref || currentHref === 'about:blank') {
-        return false;
-      }
-      return new URL(currentHref).origin === expectedOrigin;
-    } catch {
-      return true;
-    }
+    return isFrameReadyForWebui();
   }
 
   function handlePcmControlMessage(data) {
@@ -1905,9 +1950,7 @@
     if (!isFrameReadyForWebui()) {
       return;
     }
-    try {
-      frame?.contentWindow?.postMessage({ ...payload, _sender: 'floating' }, getWebuiOrigin());
-    } catch {}
+    postFrameBridgeMessage({ ...payload, _sender: 'floating' });
   }
 
   function postPcmError(requestId, err) {
@@ -1945,14 +1988,6 @@
       name: 'UnknownError',
       message: String(err || 'Unknown relay error')
     };
-  }
-
-  function getWebuiOrigin() {
-    try {
-      return new URL(webuiUrl || DEFAULT_STATE.webuiUrl).origin;
-    } catch {
-      return 'http://localhost:48911';
-    }
   }
 
   function normalizeNekoUrl(url) {
