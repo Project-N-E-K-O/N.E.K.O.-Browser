@@ -990,7 +990,9 @@
         if (data.type === 'NEKO_EMBED_CONNECT') {
             if (data.components !== undefined) setComponents(data.components, 'parent-connect');
             if (data.chatMode !== undefined) setFixedChatMode(data.chatMode, 'parent-connect');
-            requestAvatarForm(data.avatarForm, data.avatarFormRequestId, 'parent-connect');
+            if (data.avatarForm !== undefined) {
+                requestAvatarForm(data.avatarForm, data.avatarFormRequestId, 'parent-connect');
+            }
             postReady(data.requestId);
             return;
         }

@@ -148,6 +148,30 @@ test('a collapsed floating surface becomes a live fullscreen surface requesting 
   assert.match(source, /type: 'NEKO_AVATAR_FORM_STATE'/);
 });
 
+test('fullscreen transfer state survives awake status updates until an explicit collapse', () => {
+  const start = background.indexOf("if (message.type === 'NEKO_PANEL_STATE'");
+  const end = background.indexOf("if (message.type === 'NEKO_AVATAR_FORM_STATE'", start);
+  const block = background.slice(start, end);
+
+  assert.ok(start >= 0 && end > start, 'missing NEKO_PANEL_STATE handler');
+  assert.match(
+    block,
+    /if \(message\.minimized\) \{\s*payload\.fullscreenFromCollapsedFloating = false;\s*\}/
+  );
+  assert.equal(
+    block.match(/payload\.fullscreenFromCollapsedFloating = false;/g)?.length,
+    1,
+    'awake status updates must not clear the collapsed-floating transfer marker'
+  );
+});
+
+test('ordinary display mode changes intentionally restore the model form', () => {
+  assert.match(
+    background,
+    /const avatarForm = transferCollapsedFloatingToFullscreen\s*\? 'cat'[\s\S]*?: \(restoreCollapsedFloating \? 'cat' : 'model'\);/
+  );
+});
+
 test('embedded iframe inherits the page color scheme to preserve dark-page transparency', () => {
   assert.match(source, /:host\s*\{[\s\S]*?color-scheme:\s*inherit/);
   assert.match(source, /#\$\{FRAME_ID\}\s*\{[\s\S]*?color-scheme:\s*inherit/);

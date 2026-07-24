@@ -344,7 +344,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (typeof message.minimized === 'boolean') {
       payload.minimized = message.minimized;
       payload.avatarForm = message.minimized ? 'cat' : normalizeAvatarForm(message.avatarForm);
-      payload.fullscreenFromCollapsedFloating = false;
+      if (message.minimized) {
+        payload.fullscreenFromCollapsedFloating = false;
+      }
       payload.wakeStateInitialized = true;
       payload.activeTabId = sender.tab.id;
       payload.enabled = true;
@@ -506,6 +508,7 @@ async function setDisplayMode(mode) {
   const restoreCollapsedFloating = mode === 'floating'
     && previous.displayMode === 'fullscreen'
     && previous.fullscreenFromCollapsedFloating === true;
+  // 普通模式切换从模型形态重新进入，避免浮窗继承全屏的“请她离开”状态后模型消失。
   const avatarForm = transferCollapsedFloatingToFullscreen
     ? 'cat'
     : (restoreCollapsedFloating ? 'cat' : 'model');

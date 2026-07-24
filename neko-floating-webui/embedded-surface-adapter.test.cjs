@@ -114,6 +114,17 @@ test('the adapter acknowledges the host cat form only after the return cat is re
   );
 });
 
+test('a connect message without avatar state preserves the URL avatar request', () => {
+  const connectHandler = adapter.match(
+    /if \(data\.type === 'NEKO_EMBED_CONNECT'\) \{[\s\S]*?postReady\(data\.requestId\);\s*return;\s*\}/
+  );
+  assert.ok(connectHandler, 'missing NEKO_EMBED_CONNECT handler');
+  assert.match(
+    connectHandler[0],
+    /if \(data\.avatarForm !== undefined\) \{\s*requestAvatarForm\(data\.avatarForm, data\.avatarFormRequestId, 'parent-connect'\);\s*\}/
+  );
+});
+
 test('component visibility and hit testing stay in extension-owned assets', () => {
   for (const component of ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']) {
     assert.ok(adapter.includes(`'${component}'`));
