@@ -9,8 +9,18 @@ const popupHtml = read('popup.html');
 const popup = read('popup.js');
 const popupCss = read('popup.css');
 const content = read('content.js');
+const manifest = JSON.parse(read('manifest.json'));
 
 const components = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
+
+test('browser surfaces use PNG variants generated from the N.E.K.O tray icon', () => {
+  for (const size of [16, 32, 48, 128]) {
+    const iconPath = `assets/ui/icon_systray_${size}.png`;
+    assert.equal(manifest.icons[String(size)], iconPath);
+    assert.equal(manifest.action.default_icon[String(size)], iconPath);
+    assert.ok(fs.existsSync(path.join(__dirname, iconPath)));
+  }
+});
 
 test('popup exposes one checkbox for every canonical surface component', () => {
   for (const component of components) {
