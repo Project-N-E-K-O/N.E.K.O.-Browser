@@ -44,7 +44,11 @@ test('the adapter fixes chat size through the host chat surface API', () => {
 
 test('the adapter delegates moved chat viewport correction to the host geometry API', () => {
   assert.match(adapter, /host\.ensureChatSurfaceVisible\(\)/);
-  assert.match(adapter, /window\.addEventListener\('resize', \(\) => \{[\s\S]*?scheduleChatVisibilityCheck\(\)/);
+  const resizeListener = adapter.match(
+    /window\.addEventListener\('resize', \(\) => \{([^{}]*)\}\);/
+  );
+  assert.ok(resizeListener, 'missing the window resize listener');
+  assert.match(resizeListener[1], /scheduleChatVisibilityCheck\(\)/);
   assert.match(adapter, /getCurrentChatMode\(\) === 'minimized'/);
   assert.doesNotMatch(adapter, /shell\.style\.(left|top|transform)\s*=/);
 });
