@@ -107,6 +107,8 @@
     const managersPausedBySurface = new WeakSet();
     const optimizedCursorFollowers = new WeakSet();
     const cursorBoundsStates = new WeakMap();
+    const stabilizedModelDragHandlers = new WeakMap();
+    const modelPanDragStates = new WeakMap();
 
     if (requestedAvatarForm === 'cat') {
         document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
@@ -571,6 +573,8 @@
         const avatarEnabled = enabledComponents.has('avatar');
         optimizeCursorFollow(window.vrmManager, window.vrmManager?._cursorFollow, 'updateTarget');
         optimizeCursorFollow(window.mmdManager, window.mmdManager?.cursorFollow, 'update');
+        stabilizeModelPanDrag(window.vrmManager);
+        stabilizeModelPanDrag(window.mmdManager);
         [
             window.live2dManager,
             window.vrmManager,
@@ -694,6 +698,168 @@
             }
         };
         optimizedCursorFollowers.add(cursorFollow);
+    }
+
+    function getThreeModelRoot(manager) {
+        return manager?.currentModel?.scene || manager?.currentModel?.mesh || null;
+    }
+
+    function createStablePanDragState(manager, interaction) {
+        const THREE = window.THREE;
+        const modelRoot = getThreeModelRoot(manager);
+        const camera = manager?.camera;
+        const canvas = manager?.renderer?.domElement;
+        const pointer = interaction?.previousMousePosition;
+        if (!THREE || !modelRoot?.position || !camera || !canvas
+            || !Number.isFinite(Number(pointer?.x))
+            || !Number.isFinite(Number(pointer?.y))) {
+            return null;
+        }
+
+        const width = Number(canvas.clientWidth);
+        const height = Number(canvas.clientHeight);
+        if (!(width > 0) || !(height > 0)) return null;
+
+        camera.updateMatrixWorld?.(true);
+        modelRoot.updateMatrixWorld?.(true);
+        let worldPosition;
+        try {
+            worldPosition = new THREE.Box3().setFromObject(modelRoot).getCenter(new THREE.Vector3());
+        } catch (_) {
+            worldPosition = typeof modelRoot.getWorldPosition === 'function'
+                ? modelRoot.getWorldPosition(new THREE.Vector3())
+                : modelRoot.position.clone();
+        }
+        const cameraSpacePosition = worldPosition.clone().applyMatrix4(camera.matrixWorldInverse);
+        const depth = Math.abs(Number(cameraSpacePosition.z));
+        if (!(depth > 0)) return null;
+
+        const effectiveFov = typeof camera.getEffectiveFOV === 'function'
+            ? Number(camera.getEffectiveFOV())
+            : Number(camera.fov) / (Number(camera.zoom) || 1);
+        if (!(effectiveFov > 0)) return null;
+
+        const worldHeight = 2 * Math.tan(effectiveFov * Math.PI / 360) * depth;
+        const aspect = Number(camera.aspect) > 0 ? Number(camera.aspect) : width / height;
+        const cameraQuaternion = typeof camera.getWorldQuaternion === 'function'
+            ? camera.getWorldQuaternion(new THREE.Quaternion())
+            : camera.quaternion;
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cameraQuaternion).normalize();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cameraQuaternion).normalize();
+        if (modelRoot.parent && typeof modelRoot.parent.getWorldQuaternion === 'function') {
+            const parentWorldInverse = modelRoot.parent
+                .getWorldQuaternion(new THREE.Quaternion())
+                .invert();
+            right.applyQuaternion(parentWorldInverse);
+            up.applyQuaternion(parentWorldInverse);
+        }
+
+        return {
+            modelRoot,
+            pointerX: Number(pointer.x),
+            pointerY: Number(pointer.y),
+            startPosition: modelRoot.position.clone(),
+            right,
+            up,
+            pixelToWorldX: (worldHeight * aspect) / width,
+            pixelToWorldY: worldHeight / height,
+            nextPosition: modelRoot.position.clone()
+        };
+    }
+
+    function applyStablePanDragPosition(state, interaction, event) {
+        const eventX = Number(event.clientX);
+        const eventY = Number(event.clientY);
+        const deltaX = eventX - state.pointerX;
+        const deltaY = eventY - state.pointerY;
+        state.nextPosition
+            .copy(state.startPosition)
+            .addScaledVector(state.right, deltaX * state.pixelToWorldX)
+            .addScaledVector(state.up, -deltaY * state.pixelToWorldY);
+
+        const intendedX = state.nextPosition.x;
+        const intendedY = state.nextPosition.y;
+        const intendedZ = state.nextPosition.z;
+        const nextPosition = typeof interaction.clampModelPosition === 'function'
+            ? interaction.clampModelPosition(state.nextPosition)
+            : state.nextPosition;
+        state.modelRoot.position.copy(nextPosition);
+
+        const wasClamped = Math.abs(nextPosition.x - intendedX) > 1e-7
+            || Math.abs(nextPosition.y - intendedY) > 1e-7
+            || Math.abs(nextPosition.z - intendedZ) > 1e-7;
+        if (wasClamped) {
+            // Discard pointer overshoot at the boundary. Otherwise total
+            // displacement keeps growing behind the clamp and the model stays
+            // pinned while the pointer reverses direction.
+            state.startPosition.copy(nextPosition);
+            state.pointerX = eventX;
+            state.pointerY = eventY;
+        }
+    }
+
+    function runStablePanHostHandler(manager, interaction, original, event) {
+        if (manager === window.vrmManager && manager._isModelReadyForInteraction === false) {
+            original(event);
+            return false;
+        }
+        interaction.dragMode = 'neko-stable-pan';
+        try {
+            original(event);
+        } finally {
+            if (interaction.isDragging && interaction.dragMode === 'neko-stable-pan') {
+                interaction.dragMode = 'pan';
+            }
+        }
+        if (!interaction.isDragging || interaction.dragMode !== 'pan') return false;
+
+        interaction._rememberPanDragPointer?.(event);
+        interaction._rememberDragHintPanPointer?.(event);
+        if (typeof interaction._recordDragHintPointerEdgeApproach === 'function') {
+            const modelType = manager === window.vrmManager ? 'vrm' : 'mmd';
+            void interaction._recordDragHintPointerEdgeApproach(modelType);
+        }
+        return true;
+    }
+
+    function stabilizeModelPanDrag(manager) {
+        const interaction = manager?.interaction;
+        const original = interaction?.dragHandler;
+        if (!interaction || typeof original !== 'function') return;
+        if (stabilizedModelDragHandlers.get(interaction) === original) return;
+
+        document.removeEventListener('mousemove', original);
+        const wrapped = (event) => {
+            if (!interaction.isDragging || interaction.dragMode !== 'pan') {
+                modelPanDragStates.delete(interaction);
+                return original(event);
+            }
+
+            let state = modelPanDragStates.get(interaction);
+            const modelRoot = getThreeModelRoot(manager);
+            if (!state || state.modelRoot !== modelRoot) {
+                state = createStablePanDragState(manager, interaction);
+                if (state) modelPanDragStates.set(interaction, state);
+            }
+            if (!state) return original(event);
+
+            // Preserve all host-side lock, hint and bookkeeping behavior while
+            // neutralizing its incremental distance-based translation.
+            interaction.previousMousePosition = {
+                x: Number(event.clientX),
+                y: Number(event.clientY)
+            };
+            if (!runStablePanHostHandler(manager, interaction, original, event)) {
+                modelPanDragStates.delete(interaction);
+                return;
+            }
+
+            applyStablePanDragPosition(state, interaction, event);
+        };
+
+        interaction.dragHandler = wrapped;
+        document.addEventListener('mousemove', wrapped);
+        stabilizedModelDragHandlers.set(interaction, wrapped);
     }
 
     function capitalize(value) {
@@ -1108,6 +1274,53 @@
         publishPointerRelay(snapshotPointerEvent(event, phase));
     }
 
+    function finishActiveThreeModelDrags(event, force) {
+        if (!force && Number(event?.buttons) !== 0) return;
+        const vrmManager = window.vrmManager;
+        const mmdManager = window.mmdManager;
+        const vrmInteraction = vrmManager?.interaction;
+        const mmdInteraction = mmdManager?.interaction;
+        const vrmActive = vrmInteraction?.isDragging
+            && typeof vrmInteraction.mouseUpHandler === 'function';
+        const mmdActive = mmdInteraction?.isDragging
+            && typeof mmdInteraction.mouseUpHandler === 'function';
+        if (!vrmActive && !mmdActive) return;
+
+        const releaseEvent = {
+            clientX: Number(event?.clientX) || 0,
+            clientY: Number(event?.clientY) || 0,
+            screenX: Number(event?.screenX) || 0,
+            screenY: Number(event?.screenY) || 0,
+            button: 0,
+            buttons: 0,
+            preventDefault() {},
+            stopPropagation() {}
+        };
+
+        const finishManagerDrag = (manager, interaction) => {
+            cursorBoundsStates.delete(manager);
+            modelPanDragStates.delete(interaction);
+            try {
+                Promise.resolve(interaction.mouseUpHandler(releaseEvent))
+                    .catch(() => {})
+                    .finally(scheduleRegionReport);
+            } catch (_) {
+                interaction.isDragging = false;
+                interaction.dragMode = null;
+                interaction._restoreButtonPointerEvents?.();
+                scheduleRegionReport();
+            }
+        };
+        if (vrmActive) finishManagerDrag(vrmManager, vrmInteraction);
+        if (mmdActive) finishManagerDrag(mmdManager, mmdInteraction);
+    }
+
+    function clearThreeModelPanDragStates() {
+        [window.vrmManager, window.mmdManager].forEach((manager) => {
+            if (manager?.interaction) modelPanDragStates.delete(manager.interaction);
+        });
+    }
+
     function postToParent(type, payload) {
         if (window.parent === window) return;
         const targetOrigin = connectedParentOrigin || '*';
@@ -1263,10 +1476,14 @@
     });
     window.addEventListener('scroll', scheduleRegionReport, true);
     window.addEventListener('pointermove', (event) => {
+        // If the button was released outside the window, end the stale model
+        // drag before its document-level mousemove handler sees the re-entry.
+        finishActiveThreeModelDrags(event, false);
         relayPointerMove(event);
         schedulePointerRegionRefresh();
     }, { passive: true, capture: true });
     window.addEventListener('pointerdown', (event) => {
+        clearThreeModelPanDragStates();
         relayPointerImmediately(event, 'down');
     }, { passive: true, capture: true });
     window.addEventListener('pointerup', (event) => {
@@ -1279,6 +1496,7 @@
     }, { passive: true, capture: true });
     window.addEventListener('pointerout', (event) => {
         if (event.relatedTarget !== null) return;
+        finishActiveThreeModelDrags(event, true);
         relayPointerImmediately(event, 'leave');
         scheduleRegionReport();
     }, { passive: true, capture: true });
