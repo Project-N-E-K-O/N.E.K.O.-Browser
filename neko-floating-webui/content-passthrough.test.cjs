@@ -56,6 +56,46 @@ test('manual reload stays inside the extension frame bridge', () => {
   assert.match(block, /reloadFrameBridge\(\)/);
   assert.doesNotMatch(block, /frame\.src\s*=\s*getFrameTargetUrl\(\)/);
 });
+test('the floating toolbar opens a menu overlay without resizing the WebUI', () => {
+  assert.match(source, /title="菜单"[\s\S]*?aria-label="菜单"/);
+  assert.doesNotMatch(source, /title="入口"|aria-label="入口"/);
+  assert.match(source, /grid-template-rows: 46px minmax\(0, 1fr\)/);
+  assert.doesNotMatch(
+    source,
+    /data-routes-open="true"\][\s\S]{0,120}grid-template-rows/
+  );
+  assert.match(
+    source,
+    /\.routes\s*\{[\s\S]*?position: absolute;[\s\S]*?z-index: 10;/
+  );
+  assert.match(source, /\.route-mark svg\s*\{/);
+  assert.doesNotMatch(
+    source,
+    /class="route-mark"[^>]*>(主|聊|模|钥|忆)</
+  );
+  assert.match(source, /\.content\s*\{[\s\S]*?grid-row: 2;/);
+
+  const actionBlock = functionBlock('handleAction', 'setRoutesOpen');
+  const menuAction = actionBlock.match(
+    /if \(action === 'routes'\) \{([\s\S]*?)\n    \}/
+  );
+  assert.ok(menuAction, 'missing menu action');
+  assert.match(menuAction[1], /setRoutesOpen/);
+  assert.doesNotMatch(menuAction[1], /scheduleWebuiReflow/);
+
+  const menuBlock = functionBlock('setRoutesOpen', 'openRoute');
+  assert.match(menuBlock, /routesEl\.hidden = !open/);
+  assert.match(menuBlock, /setAttribute\('aria-expanded', String\(open\)\)/);
+  const routeBlock = functionBlock('openRoute', 'isFrameReadyForWebui');
+  assert.match(routeBlock, /setRoutesOpen\(false\)/);
+});
+
+test('the floating toolbar action group keeps a stable cursor and never starts panel dragging', () => {
+  assert.match(source, /\.actions\s*\{[\s\S]*?cursor:\s*pointer/);
+
+  const block = functionBlock('bindToolbarDrag', 'endToolbarDrag');
+  assert.match(block, /event\.target\.closest\('\.actions'\)/);
+});
 
 test('fullscreen iframe is click-through until an interactive region is selected', () => {
   assert.match(source, /data-display-mode="fullscreen"\]\s+#\$\{FRAME_ID\}[\s\S]*?pointer-events: none !important/);

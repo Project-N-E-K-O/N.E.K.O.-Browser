@@ -3,6 +3,7 @@
   const PANEL_ID = 'neko-floating-webui-panel';
   const FRAME_ID = 'neko-floating-webui-frame';
   const WAKE_ID = 'neko-floating-webui-wake';
+  const MENU_ID = 'neko-floating-webui-menu';
 
   const MINIMIZED_SIZE = { width: 96, height: 96 };
   const MIN_SIZE = { width: 320, height: 420 };
@@ -421,23 +422,19 @@
         z-index: 2147483647;
         box-sizing: border-box;
         display: grid;
-        grid-template-rows: 42px 0 minmax(0, 1fr);
+        grid-template-rows: 46px minmax(0, 1fr);
         min-width: ${MIN_SIZE.width}px;
         min-height: ${MIN_SIZE.height}px;
         max-width: min(90vw, 860px);
         max-height: 90vh;
         border: 1px solid rgba(15, 23, 42, 0.18);
-        border-radius: 8px;
+        border-radius: 12px;
         overflow: hidden;
         background: transparent;
         box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
         pointer-events: auto;
         color: #0f172a;
         font-family: Inter, "Segoe UI", Arial, sans-serif;
-      }
-
-      #${PANEL_ID}[data-routes-open="true"] {
-        grid-template-rows: 42px auto minmax(0, 1fr);
       }
 
       #${PANEL_ID}[data-minimized="true"] {
@@ -494,15 +491,22 @@
 
       .toolbar {
         grid-row: 1;
+        position: relative;
+        z-index: 8;
+        box-sizing: border-box;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
-        height: 42px;
-        padding: 0 8px 0 12px;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.1);
-        background: rgba(255, 255, 255, 0.92);
-        backdrop-filter: blur(14px);
+        gap: 10px;
+        height: 46px;
+        padding: 0 7px 0 13px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(241, 248, 255, 0.96));
+        box-shadow:
+          inset 0 1px rgba(255, 255, 255, 0.9),
+          0 1px 0 rgba(15, 23, 42, 0.04);
+        backdrop-filter: blur(16px) saturate(1.15);
         cursor: move;
         user-select: none;
       }
@@ -511,35 +515,67 @@
         display: inline-flex;
         align-items: center;
         min-width: 0;
-        gap: 8px;
-        font-size: 13px;
-        font-weight: 650;
+        gap: 9px;
         white-space: nowrap;
       }
 
+      .brand-title {
+        color: #172033;
+        font-size: 13px;
+        font-weight: 760;
+        letter-spacing: 0.045em;
+      }
+
+      .brand-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 22px;
+        padding: 0 8px 0 7px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.7);
+        color: #64748b;
+        font-size: 10px;
+        font-weight: 650;
+        letter-spacing: 0.02em;
+      }
+
       .status-dot {
-        width: 8px;
-        height: 8px;
+        width: 7px;
+        height: 7px;
         flex: 0 0 auto;
         border-radius: 50%;
         background: #f59e0b;
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
       }
 
-      .status-dot[data-state="online"] { background: #16a34a; }
-      .status-dot[data-state="offline"] { background: #dc2626; }
+      .status-dot[data-state="online"] {
+        background: #22c55e;
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
+      }
+
+      .status-dot[data-state="offline"] {
+        background: #ef4444;
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+      }
 
       .actions {
         display: inline-flex;
         align-items: center;
-        gap: 4px;
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.58);
+        cursor: pointer;
       }
 
       .actions button,
-      .routes button,
       .offline button {
         border: 1px solid rgba(15, 23, 42, 0.14);
-        border-radius: 6px;
-        background: #ffffff;
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.82);
         color: #0f172a;
         cursor: pointer;
         font: inherit;
@@ -547,51 +583,177 @@
 
       .actions button {
         display: inline-grid;
-        width: 28px;
-        height: 28px;
+        width: 27px;
+        height: 27px;
         place-items: center;
         padding: 0;
-        font-size: 12px;
-        font-weight: 700;
+        border-color: transparent;
+        color: #475569;
+        transition:
+          color 140ms ease,
+          background 140ms ease,
+          border-color 140ms ease,
+          transform 140ms ease;
+      }
+
+      .actions button svg {
+        width: 15px;
+        height: 15px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
 
       .actions button:hover,
-      .routes button:hover,
       .offline button:hover {
-        background: #eef2ff;
-        border-color: rgba(79, 70, 229, 0.32);
+        background: #f0f7ff;
+        border-color: rgba(14, 165, 233, 0.28);
+        color: #0284c7;
+      }
+
+      .actions button:hover {
+        transform: translateY(-1px);
+      }
+
+      .actions button:active {
+        transform: translateY(0);
+      }
+
+      .actions button[aria-expanded="true"] {
+        border-color: rgba(14, 165, 233, 0.3);
+        background: #e0f2fe;
+        color: #0284c7;
+      }
+
+      .actions button[data-action="close"]:hover {
+        border-color: rgba(239, 68, 68, 0.24);
+        background: #fef2f2;
+        color: #dc2626;
       }
 
       .routes {
-        grid-row: 2;
-        display: flex;
-        gap: 6px;
+        position: absolute;
+        z-index: 10;
+        top: 52px;
+        right: 8px;
+        box-sizing: border-box;
+        width: min(232px, calc(100% - 16px));
         padding: 8px;
-        border-bottom: 1px solid rgba(15, 23, 42, 0.1);
-        background: rgba(248, 250, 252, 0.9);
-        backdrop-filter: blur(14px);
-        overflow-x: auto;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        border-radius: 12px;
+        background: #ffffff;
+        box-shadow:
+          0 18px 42px rgba(15, 23, 42, 0.2),
+          0 3px 10px rgba(15, 23, 42, 0.08);
+        color: #0f172a;
+        animation: menu-pop 150ms ease-out;
       }
 
       .routes[hidden] {
-        display: flex;
-        height: 0;
-        padding-top: 0;
-        padding-bottom: 0;
-        border-bottom: 0;
-        visibility: hidden;
-        overflow: hidden;
+        display: none;
       }
 
-      .routes button {
+      @keyframes menu-pop {
+        from {
+          opacity: 0;
+          transform: translateY(-5px) scale(0.98);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      .routes-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         height: 28px;
+        padding: 0 3px 5px 7px;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      .routes-close {
+        display: inline-grid;
+        width: 24px;
+        height: 24px;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: #94a3b8;
+        cursor: pointer;
+        font: 16px/1 "Segoe UI", sans-serif;
+      }
+
+      .routes-close:hover {
+        background: #f1f5f9;
+        color: #334155;
+      }
+
+      .routes-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+      }
+
+      .route-item {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        height: 38px;
+        padding: 0 8px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: #f8fafc;
+        color: #334155;
+        cursor: pointer;
+        font: 600 11px/1 "Segoe UI", sans-serif;
+        text-align: left;
+        transition:
+          color 140ms ease,
+          background 140ms ease,
+          border-color 140ms ease,
+          transform 140ms ease;
+      }
+
+      .route-item:hover {
+        border-color: rgba(14, 165, 233, 0.2);
+        background: #f0f9ff;
+        color: #0369a1;
+        transform: translateY(-1px);
+      }
+
+      .route-mark {
+        display: inline-grid;
+        width: 22px;
+        height: 22px;
         flex: 0 0 auto;
-        padding: 0 10px;
-        font-size: 12px;
+        place-items: center;
+        border-radius: 7px;
+        background: #e0f2fe;
+        color: #0284c7;
+      }
+
+      .route-mark svg {
+        width: 13px;
+        height: 13px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
 
       .content {
-        grid-row: 3;
+        grid-row: 2;
         position: relative;
         min-height: 0;
         background: transparent;
@@ -637,7 +799,7 @@
       }
 
       .resize-e {
-        top: 42px;
+        top: 46px;
         right: 0;
         width: 8px;
         bottom: 8px;
@@ -678,7 +840,7 @@
         box-shadow: none !important;
         background: transparent !important;
         pointer-events: none !important;
-        grid-template-rows: 0 0 minmax(0, 1fr) !important;
+        grid-template-rows: 0 minmax(0, 1fr) !important;
       }
 
       #${PANEL_ID}[data-display-mode="fullscreen"] .toolbar,
@@ -724,6 +886,89 @@
         cursor: nwse-resize !important;
         user-select: none;
       }
+
+      @media (prefers-color-scheme: dark) {
+        #${PANEL_ID} {
+          border-color: rgba(148, 163, 184, 0.26);
+          color: #e2e8f0;
+        }
+
+        .toolbar {
+          border-bottom-color: rgba(148, 163, 184, 0.16);
+          background:
+            linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(17, 36, 56, 0.97));
+          box-shadow:
+            inset 0 1px rgba(255, 255, 255, 0.05),
+            0 1px 0 rgba(0, 0, 0, 0.28);
+        }
+
+        .brand-title {
+          color: #f1f5f9;
+        }
+
+        .brand-state,
+        .actions {
+          border-color: rgba(148, 163, 184, 0.14);
+          background: rgba(15, 23, 42, 0.46);
+          color: #94a3b8;
+        }
+
+        .actions button {
+          background: rgba(30, 41, 59, 0.76);
+          color: #cbd5e1;
+        }
+
+        .actions button:hover,
+        .actions button[aria-expanded="true"] {
+          border-color: rgba(56, 189, 248, 0.25);
+          background: rgba(14, 116, 144, 0.25);
+          color: #7dd3fc;
+        }
+
+        .actions button[data-action="close"]:hover {
+          border-color: rgba(248, 113, 113, 0.22);
+          background: rgba(127, 29, 29, 0.28);
+          color: #fca5a5;
+        }
+
+        .routes {
+          border-color: rgba(148, 163, 184, 0.22);
+          background: #111c2b;
+          box-shadow:
+            0 18px 42px rgba(0, 0, 0, 0.42),
+            0 3px 10px rgba(0, 0, 0, 0.3);
+          color: #e2e8f0;
+        }
+
+        .routes-head {
+          color: #94a3b8;
+        }
+
+        .routes-close {
+          color: #64748b;
+        }
+
+        .routes-close:hover {
+          background: #1e293b;
+          color: #e2e8f0;
+        }
+
+        .route-item {
+          background: #172334;
+          color: #cbd5e1;
+        }
+
+        .route-item:hover {
+          border-color: rgba(56, 189, 248, 0.2);
+          background: #172e43;
+          color: #7dd3fc;
+        }
+
+        .route-mark {
+          background: rgba(14, 116, 144, 0.3);
+          color: #7dd3fc;
+        }
+      }
     `;
 
     panel = document.createElement('div');
@@ -760,29 +1005,84 @@
     toolbarEl.dataset.dragHandle = '';
     toolbarEl.innerHTML = `
       <div class="brand">
-        <span class="status-dot" data-status></span>
-        <span>N.E.K.O</span>
+        <span class="brand-title">N.E.K.O</span>
+        <span class="brand-state">
+          <span class="status-dot" data-status></span>
+          <span>WebUI</span>
+        </span>
       </div>
       <nav class="actions" aria-label="浮窗操作">
-        <button type="button" data-action="reload" title="刷新 WebUI" aria-label="刷新 WebUI">↻</button>
-        <button type="button" data-action="routes" title="入口" aria-label="入口">☰</button>
-        <button type="button" data-action="open" title="打开完整页面" aria-label="打开完整页面">↗</button>
-        <button type="button" data-action="minimize" title="最小化" aria-label="最小化">−</button>
-        <button type="button" data-action="close" title="关闭" aria-label="关闭">×</button>
+        <button type="button" data-action="reload" title="刷新 WebUI" aria-label="刷新 WebUI">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M18.2 15a7 7 0 1 1 .3-6.4L20 11"/></svg>
+        </button>
+        <button
+          type="button"
+          data-action="routes"
+          title="菜单"
+          aria-label="菜单"
+          aria-haspopup="menu"
+          aria-controls="${MENU_ID}"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
+        </button>
+        <button type="button" data-action="open" title="打开完整页面" aria-label="打开完整页面">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"/><path d="M10 14 19 5"/><path d="M19 14v5H5V5h5"/></svg>
+        </button>
+        <button type="button" data-action="minimize" title="最小化" aria-label="最小化">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>
+        </button>
+        <button type="button" data-action="close" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>
+        </button>
       </nav>
     `;
     toolbar = toolbarEl;
 
     const routesContainer = document.createElement('div');
+    routesContainer.id = MENU_ID;
     routesContainer.className = 'routes';
     routesContainer.dataset.routes = '';
+    routesContainer.setAttribute('role', 'menu');
+    routesContainer.setAttribute('aria-label', '菜单');
     routesContainer.hidden = true;
     routesContainer.innerHTML = `
-      <button type="button" data-route="/">主界面</button>
-      <button type="button" data-route="/chat_full">完整聊天</button>
-      <button type="button" data-route="/model_manager">模型</button>
-      <button type="button" data-route="/api_key">密钥</button>
-      <button type="button" data-route="/memory_browser">记忆</button>
+      <div class="routes-head">
+        <span>菜单</span>
+        <button type="button" class="routes-close" data-action="routes" aria-label="关闭菜单">×</button>
+      </div>
+      <div class="routes-list">
+        <button type="button" class="route-item" role="menuitem" data-route="/">
+          <span class="route-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg>
+          </span>
+          <span>主界面</span>
+        </button>
+        <button type="button" class="route-item" role="menuitem" data-route="/chat_full">
+          <span class="route-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 17.5 3.8 21l4.3-1.7A9 9 0 1 0 5 17.5Z"/><path d="M8 11h8M8 14h5"/></svg>
+          </span>
+          <span>完整聊天</span>
+        </button>
+        <button type="button" class="route-item" role="menuitem" data-route="/model_manager">
+          <span class="route-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21c.7-4.2 3-6.3 7-6.3s6.3 2.1 7 6.3"/><path d="M8.7 7.2c1.7.1 3.2-.7 4.2-2.2.7 1.2 1.5 1.9 2.6 2.2"/></svg>
+          </span>
+          <span>模型</span>
+        </button>
+        <button type="button" class="route-item" role="menuitem" data-route="/api_key">
+          <span class="route-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M15 12v2"/></svg>
+          </span>
+          <span>密钥</span>
+        </button>
+        <button type="button" class="route-item" role="menuitem" data-route="/memory_browser">
+          <span class="route-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+          </span>
+          <span>记忆</span>
+        </button>
+      </div>
     `;
     routesEl = routesContainer;
 
@@ -832,12 +1132,24 @@
     shadow.addEventListener('click', (event) => {
       const actionButton = event.target.closest('[data-action]');
       const routeButton = event.target.closest('[data-route]');
-      if (actionButton) {
-        handleAction(actionButton.dataset.action);
-      }
       if (routeButton) {
         openRoute(routeButton.dataset.route);
+        return;
       }
+      if (actionButton) {
+        handleAction(actionButton.dataset.action);
+        return;
+      }
+      if (routesEl && !routesEl.hidden && !routesEl.contains(event.target)) {
+        setRoutesOpen(false);
+      }
+    });
+    shadow.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !routesEl || routesEl.hidden) {
+        return;
+      }
+      setRoutesOpen(false);
+      toolbar?.querySelector('[data-action="routes"]')?.focus();
     });
   }
 
@@ -858,7 +1170,6 @@
 
     if (action === 'routes') {
       setRoutesOpen(routesEl?.hidden === true);
-      scheduleWebuiReflow();
       return;
     }
 
@@ -889,9 +1200,13 @@
     }
     routesEl.hidden = !open;
     panel.dataset.routesOpen = String(open);
+    toolbar
+      ?.querySelector('[data-action="routes"]')
+      ?.setAttribute('aria-expanded', String(open));
   }
 
   function openRoute(path) {
+    setRoutesOpen(false);
     const routeUrl = new URL(path || '/', webuiUrl || DEFAULT_STATE.webuiUrl);
     chrome.runtime.sendMessage({
       type: 'NEKO_OPEN_TAB',
@@ -997,6 +1312,7 @@
     panel.dataset.minimized = String(minimized);
 
     if (minimized) {
+      setRoutesOpen(false);
       unloadFrame();
       stopAllPcmRelays();
     } else {
@@ -1024,7 +1340,7 @@
 
   function bindToolbarDrag(handle) {
     handle.addEventListener('pointerdown', (event) => {
-      if (event.target.closest('button')) {
+      if (event.target.closest('.actions')) {
         return;
       }
       if (panel?.dataset.minimized === 'true') {

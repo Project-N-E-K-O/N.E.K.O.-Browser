@@ -1,11 +1,18 @@
 (() => {
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
+  const modesEl = document.querySelector('.modes');
   const modeButtons = document.querySelectorAll('.modes button');
+  const sectionEls = document.querySelectorAll('.section');
   const toggleButton = document.getElementById('toggle');
   const hintEl = document.getElementById('hint');
   const errorEl = document.getElementById('error');
   const componentsHintEl = document.getElementById('components-hint');
   const chatSurfaceModeEl = document.getElementById('chat-surface-mode');
+  const chatModeDropdownEl = document.getElementById('chat-mode-dropdown');
+  const chatModeDropdownTrigger = document.getElementById('chat-mode-dropdown-trigger');
+  const chatModeDropdownCurrent = chatModeDropdownEl.querySelector('.chat-mode-dropdown-current');
+  const chatModeDropdownMenu = document.getElementById('chat-mode-dropdown-menu');
+  const chatModeDropdownOptions = Array.from(chatModeDropdownMenu.querySelectorAll('.chat-mode-dropdown-option'));
   const chatModeHintEl = document.getElementById('chat-mode-hint');
   const webuiUrlEl = document.getElementById('webui-url');
   const saveWebuiUrlButton = document.getElementById('save-webui-url');
@@ -22,7 +29,9 @@
   let microphonePermissionStatus = null;
   let currentWindowId = null;
   let activeSidePanelWindowId = null;
+  let modesReady = false;
 
+  setupPanelHover();
   setControlsDisabled(true);
 
   async function refresh() {
@@ -51,6 +60,11 @@
   }
 
   function render() {
+    modesEl.dataset.activeMode = currentMode;
+    if (!modesReady) {
+      modesReady = true;
+      requestAnimationFrame(() => modesEl.classList.add('is-ready'));
+    }
     modeButtons.forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === currentMode);
     });
@@ -59,6 +73,7 @@
       webuiUrlEl.value = currentWebuiUrl;
     }
     chatSurfaceModeEl.value = currentChatSurfaceMode;
+    syncChatModeDropdown();
     componentInputs.forEach((input) => {
       input.checked = selected.has(input.dataset.surfaceComponent);
     });
@@ -86,6 +101,9 @@
     btn.addEventListener('click', async () => {
       const mode = normalizeDisplayMode(btn.dataset.mode);
       clearError();
+      modeButtons.forEach((button) => {
+        button.disabled = true;
+      });
       try {
         if (mode === 'sidebar') {
           const openPromise = chrome.sidePanel.open({ windowId: currentWindowId });
@@ -96,9 +114,15 @@
           const response = await chrome.runtime.sendMessage({ type: 'NEKO_SET_DISPLAY_MODE', mode });
           assertOk(response);
         }
-        window.close();
+        currentMode = mode;
+        activeSidePanelWindowId = mode === 'sidebar' ? currentWindowId : null;
+        render();
       } catch (error) {
         showError(error);
+      } finally {
+        modeButtons.forEach((button) => {
+          button.disabled = false;
+        });
       }
     });
   });
@@ -184,6 +208,67 @@
       }
       setControlsDisabled(false);
     });
+  });
+
+  chatModeDropdownTrigger.addEventListener('click', () => {
+    setChatModeDropdownOpen(!chatModeDropdownEl.classList.contains('open'));
+  });
+
+  chatModeDropdownTrigger.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+      return;
+    }
+    event.preventDefault();
+    setChatModeDropdownOpen(true);
+    const selectedIndex = Math.max(0, chatModeDropdownOptions.findIndex((option) => option.classList.contains('selected')));
+    const targetIndex = event.key === 'ArrowUp' ? chatModeDropdownOptions.length - 1 : selectedIndex;
+    chatModeDropdownOptions[targetIndex]?.focus();
+  });
+
+  chatModeDropdownOptions.forEach((option) => {
+    option.addEventListener('click', () => {
+      chatSurfaceModeEl.value = normalizeChatSurfaceMode(option.dataset.value);
+      syncChatModeDropdown();
+      setChatModeDropdownOpen(false);
+      chatSurfaceModeEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
+  chatModeDropdownMenu.addEventListener('keydown', (event) => {
+    const enabledOptions = chatModeDropdownOptions.filter((option) => !option.disabled);
+    const currentIndex = enabledOptions.indexOf(document.activeElement);
+    let targetIndex = null;
+    if (event.key === 'ArrowDown') {
+      targetIndex = (currentIndex + 1) % enabledOptions.length;
+    } else if (event.key === 'ArrowUp') {
+      targetIndex = (currentIndex - 1 + enabledOptions.length) % enabledOptions.length;
+    } else if (event.key === 'Home') {
+      targetIndex = 0;
+    } else if (event.key === 'End') {
+      targetIndex = enabledOptions.length - 1;
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      setChatModeDropdownOpen(false);
+      chatModeDropdownTrigger.focus();
+      return;
+    }
+    if (targetIndex !== null && enabledOptions.length > 0) {
+      event.preventDefault();
+      enabledOptions[targetIndex]?.focus();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!chatModeDropdownEl.contains(event.target)) {
+      setChatModeDropdownOpen(false);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && chatModeDropdownEl.classList.contains('open')) {
+      setChatModeDropdownOpen(false);
+      chatModeDropdownTrigger.focus();
+    }
   });
 
   chatSurfaceModeEl.addEventListener('change', async () => {
@@ -319,6 +404,46 @@
     saveWebuiUrlButton.disabled = disabled;
     resetWebuiUrlButton.disabled = disabled;
     authorizeMicrophoneButton.disabled = disabled;
+    chatModeDropdownTrigger.disabled = disabled;
+    chatModeDropdownOptions.forEach((option) => {
+      option.disabled = disabled;
+    });
+    if (disabled) {
+      setChatModeDropdownOpen(false);
+    }
+  }
+
+  function setChatModeDropdownOpen(open) {
+    const nextOpen = Boolean(open) && !chatModeDropdownTrigger.disabled;
+    chatModeDropdownEl.classList.toggle('open', nextOpen);
+    chatModeDropdownTrigger.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+    chatModeDropdownMenu.hidden = !nextOpen;
+  }
+
+  function syncChatModeDropdown() {
+    const selectedOption = Array.from(chatSurfaceModeEl.options).find((option) => option.value === chatSurfaceModeEl.value)
+      || chatSurfaceModeEl.options[0];
+    chatModeDropdownCurrent.textContent = selectedOption?.textContent || '';
+    chatModeDropdownOptions.forEach((option) => {
+      const selected = option.dataset.value === chatSurfaceModeEl.value;
+      option.classList.toggle('selected', selected);
+      option.setAttribute('aria-selected', selected ? 'true' : 'false');
+    });
+  }
+
+  function setupPanelHover() {
+    const supportsHover = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    const reducesMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!supportsHover || reducesMotion) {
+      return;
+    }
+
+    sectionEls.forEach((section) => {
+      const hoverZone = document.createElement('div');
+      hoverZone.className = 'section-hover-zone';
+      section.parentNode.insertBefore(hoverZone, section);
+      hoverZone.appendChild(section);
+    });
   }
 
   function assertOk(response) {
