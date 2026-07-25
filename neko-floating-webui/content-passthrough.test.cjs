@@ -144,7 +144,10 @@ test('3D hit tests are coalesced to one in-flight request', () => {
   const resultBlock = functionBlock('handleEmbedHitTestResult', 'handleEmbeddedPointer');
   assert.match(resultBlock, /pendingEmbedHitTest = null/);
   assert.match(resultBlock, /window\.clearTimeout\(embedHitTestTimeout\)/);
-  assert.match(resultBlock, /scheduleEmbedHitTest\(\)/);
+  assert.match(
+    resultBlock,
+    /Math\.abs\(lastHostPointer\.y - pending\.hostY\) > 1[\s\S]*?requestEmbedHitTest\(point\.x, point\.y, lastHostPointer\)/
+  );
   assert.ok(
     resultBlock.indexOf('pendingEmbedHitTest = null')
       < resultBlock.indexOf('embedPointerLock !== null'),
@@ -158,20 +161,21 @@ test('3D hit tests are coalesced to one in-flight request', () => {
 });
 
 test('passthrough pointer movement refreshes embedded regions at bounded cadence', () => {
-  const hostPointerBlock = source.slice(
-    source.indexOf('function handleHostPointerMove'),
-    source.indexOf('function updateFrameInteractionFromLastPointer')
-  );
+  const hostPointerBlock = functionBlock('handleHostPointerMove', 'scheduleEmbedRegionRefresh');
   assert.match(hostPointerBlock, /scheduleEmbedRegionRefresh\(\)/);
 
-  const refreshBlock = source.slice(
-    source.indexOf('function scheduleEmbedRegionRefresh'),
-    source.indexOf('function updateFrameInteractionFromLastPointer')
-  );
+  const refreshBlock = functionBlock('scheduleEmbedRegionRefresh', 'updateFrameInteractionFromLastPointer');
   assert.match(refreshBlock, /EMBED_REGION_REFRESH_MS/);
   assert.match(refreshBlock, /embedRegionRefreshTimer/);
   assert.match(refreshBlock, /window\.setTimeout/);
   assert.match(refreshBlock, /NEKO_EMBED_GET_REGIONS/);
+
+  const resetBlock = functionBlock('resetEmbedPassthrough', 'startEmbeddedSurfaceHandshake');
+  assert.match(
+    resetBlock,
+    /embedRegionRefreshTimer[\s\S]*?window\.clearTimeout\(embedRegionRefreshTimer\)[\s\S]*?embedRegionRefreshTimer = 0/
+  );
+  assert.match(resetBlock, /lastEmbedRegionRefreshAt = 0/);
 });
 
 test('fullscreen uses the embedded avatar without a separate extension wake button', () => {

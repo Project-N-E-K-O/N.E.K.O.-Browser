@@ -1071,9 +1071,12 @@
         // which are intentionally broader than configured Cubism hit areas.
         // Match that contract so limbs remain draggable while the rest of the
         // full-screen iframe can still pass through to the host page.
-        const live2dRegion = cachedAvatarBoundsRegion?.id === 'live2d-model'
+        let live2dRegion = cachedAvatarBoundsRegion?.id === 'live2d-model'
             ? cachedAvatarBoundsRegion
             : null;
+        if (!live2dRegion) {
+            live2dRegion = getLive2DBoundsRegion();
+        }
         if (live2dRegion && pointInRect(x, y, live2dRegion.rect)) {
             return {
                 interactive: true,

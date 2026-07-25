@@ -8,6 +8,14 @@ const manifest = JSON.parse(read('manifest.json'));
 const adapter = read('embedded-surface-main-world.js');
 const css = read('embedded-surface.css');
 
+function functionBlock(name, nextName) {
+  const start = adapter.indexOf(`function ${name}`);
+  assert.notEqual(start, -1, `missing ${name}`);
+  const end = adapter.indexOf(`function ${nextName}`, start + 1);
+  assert.notEqual(end, -1, `missing ${nextName}`);
+  return adapter.slice(start, end);
+}
+
 test('the extension owns and injects the embedded surface adapter', () => {
   const webScripts = manifest.content_scripts.filter((entry) => (
     entry.matches.includes('http://*/*') && entry.matches.includes('https://*/*')
@@ -151,17 +159,11 @@ test('component visibility and hit testing stay in extension-owned assets', () =
 });
 
 test('pointer hover reuses reported regions and refreshes them at bounded cadence', () => {
-  const collectBlock = adapter.slice(
-    adapter.indexOf('function collectRegions'),
-    adapter.indexOf('function scheduleRegionReport')
-  );
+  const collectBlock = functionBlock('collectRegions', 'scheduleRegionReport');
   assert.match(collectBlock, /cachedElementRegions =/);
   assert.match(collectBlock, /cachedAvatarBoundsRegion = avatarRegion/);
 
-  const uiHitBlock = adapter.slice(
-    adapter.indexOf('function hitTestUi'),
-    adapter.indexOf('function hitTestLive2D')
-  );
+  const uiHitBlock = functionBlock('hitTestUi', 'hitTestLive2D');
   assert.match(uiHitBlock, /cachedElementRegions \|\| collectElementRegions\(\)/);
 
   const pointerMoveListener = adapter.match(
@@ -172,31 +174,35 @@ test('pointer hover reuses reported regions and refreshes them at bounded cadenc
   assert.match(pointerMoveListener[1], /schedulePointerRegionRefresh\(\)/);
   assert.doesNotMatch(pointerMoveListener[1], /scheduleRegionReport\(\)/);
 
-  const refreshBlock = adapter.slice(
-    adapter.indexOf('function schedulePointerRegionRefresh'),
-    adapter.indexOf('function reportRegions')
-  );
+  const refreshBlock = functionBlock('schedulePointerRegionRefresh', 'reportRegions');
   assert.match(refreshBlock, /POINTER_REGION_REFRESH_MS/);
   assert.match(refreshBlock, /pointerRegionRefreshTimer/);
   assert.match(refreshBlock, /window\.setTimeout/);
   assert.match(refreshBlock, /scheduleRegionReport\(\)/);
 });
 
-test('embedded 3D hover avoids raycasting without replacing host manager behavior', () => {
-  const threeRegionBlock = adapter.slice(
-    adapter.indexOf('function getThreeBoundsRegion'),
-    adapter.indexOf('function getPngtuberBoundsRegion')
+test('Live2D pointer hit testing falls back before avatar bounds are cached', () => {
+  const pointerHitBlock = functionBlock('hitTestPointerSurface', 'relayPointerMove');
+  assert.match(
+    pointerHitBlock,
+    /cachedAvatarBoundsRegion\?\.id === 'live2d-model'[\s\S]*?getLive2DBoundsRegion\(\)/
   );
+  assert.equal(
+    (pointerHitBlock.match(/getLive2DBoundsRegion\(\)/g) || []).length,
+    1,
+    'the uncached Live2D fallback should calculate only Live2D bounds once'
+  );
+});
+
+test('embedded 3D hover avoids raycasting without replacing host manager behavior', () => {
+  const threeRegionBlock = functionBlock('getThreeBoundsRegion', 'getPngtuberBoundsRegion');
   assert.match(threeRegionBlock, /manager\.interaction\?\._cachedScreenBounds/);
   assert.match(
     threeRegionBlock,
     /cachedBounds\s*\|\|\s*\(typeof manager\.getModelScreenBounds === 'function'/
   );
 
-  const threeHitBlock = adapter.slice(
-    adapter.indexOf('function hitTestThreeManager'),
-    adapter.indexOf('function hitTestPngtuber')
-  );
+  const threeHitBlock = functionBlock('hitTestThreeManager', 'hitTestPngtuber');
   assert.match(threeHitBlock, /cachedAvatarBoundsRegion/);
   assert.match(threeHitBlock, /normalizeThreeScreenBounds\(manager\.interaction\?\._cachedScreenBounds\)/);
   assert.match(threeHitBlock, /interactionBounds \|\| reportedBounds/);
@@ -208,10 +214,7 @@ test('embedded 3D hover avoids raycasting without replacing host manager behavio
 });
 
 test('cursor-follow bounds are cached without changing the host manager contract', () => {
-  const optimizeBlock = adapter.slice(
-    adapter.indexOf('function readCursorFollowBounds'),
-    adapter.indexOf('function capitalize')
-  );
+  const optimizeBlock = functionBlock('readCursorFollowBounds', 'capitalize');
   assert.match(optimizeBlock, /CURSOR_BOUNDS_REFRESH_MS/);
   assert.match(optimizeBlock, /state\.model !== model/);
   assert.match(optimizeBlock, /manager\.interaction/);
@@ -225,10 +228,7 @@ test('cursor-follow bounds are cached without changing the host manager contract
 });
 
 test('3D passthrough keeps only the narrow model-centered part of broad bounds', () => {
-  const conservativeBoundsBlock = adapter.slice(
-    adapter.indexOf('function pointInAvatarConservativeBounds'),
-    adapter.indexOf('function hitTestUi')
-  );
+  const conservativeBoundsBlock = functionBlock('pointInAvatarConservativeBounds', 'hitTestUi');
   assert.match(conservativeBoundsBlock, /halfWidth[\s\S]*?\* 0\.5 \* 0\.4/);
   assert.match(conservativeBoundsBlock, /halfHeight[\s\S]*?\* 0\.5 \* 0\.9/);
   assert.match(conservativeBoundsBlock, /Math\.abs\(x - centerX\) <= halfWidth/);

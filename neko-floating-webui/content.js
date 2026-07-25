@@ -1712,6 +1712,11 @@
       window.clearTimeout(embedFallbackTimer);
       embedFallbackTimer = 0;
     }
+    if (embedRegionRefreshTimer) {
+      window.clearTimeout(embedRegionRefreshTimer);
+      embedRegionRefreshTimer = 0;
+    }
+    lastEmbedRegionRefreshAt = 0;
     if (panel) {
       panel.dataset.embedInteractive = 'false';
       panel.dataset.embedProtocol = reason || 'idle';
@@ -2011,7 +2016,10 @@
     if (!lastHostPointer
         || Math.abs(lastHostPointer.x - pending.hostX) > 1
         || Math.abs(lastHostPointer.y - pending.hostY) > 1) {
-      scheduleEmbedHitTest();
+      if (lastHostPointer) {
+        const point = hostPointToEmbedPoint(lastHostPointer.x, lastHostPointer.y);
+        requestEmbedHitTest(point.x, point.y, lastHostPointer);
+      }
       return;
     }
     setFrameInteractive(data.interactive === true, 'model-hit-test');
