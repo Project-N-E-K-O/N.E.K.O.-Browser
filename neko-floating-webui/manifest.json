@@ -87,6 +87,7 @@
       "resources": [
         "transparent-page.css",
         "transparent-main-world.js",
+        "floating-frame.html",
         "assets/cat-idle-cat1.gif"
       ],
       "matches": [
