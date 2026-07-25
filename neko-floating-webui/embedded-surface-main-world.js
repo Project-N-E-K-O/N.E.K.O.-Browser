@@ -17,6 +17,8 @@
 
     const PROTOCOL_VERSION = 1;
     const MOBILE_VIEWPORT_MAX_WIDTH = 768;
+    const POINTER_REGION_REFRESH_MS = 200;
+    const CURSOR_BOUNDS_REFRESH_MS = 200;
     const COMPONENT_ORDER = Object.freeze(['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']);
     const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
     const UI_REGION_SELECTORS = Object.freeze({
@@ -90,6 +92,10 @@
     let managerSyncTicks = 0;
     let pointerRelayFrame = 0;
     let pendingPointerRelay = null;
+    let pointerRegionRefreshTimer = 0;
+    let lastPointerRegionRefreshAt = 0;
+    let cachedElementRegions = null;
+    let cachedAvatarBoundsRegion = null;
     let responsiveViewportFrame = 0;
     let lastMobileViewport = isMobileViewport();
     let requestedAvatarForm = initialAvatarForm;
@@ -99,6 +105,8 @@
     let avatarModelReturnDispatchedAt = 0;
     let lastAvatarFormReport = '';
     const managersPausedBySurface = new WeakSet();
+    const optimizedCursorFollowers = new WeakSet();
+    const cursorBoundsStates = new WeakMap();
 
     if (requestedAvatarForm === 'cat') {
         document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
@@ -561,6 +569,8 @@
 
     function syncAvatarRendering() {
         const avatarEnabled = enabledComponents.has('avatar');
+        optimizeCursorFollow(window.vrmManager, window.vrmManager?._cursorFollow, 'updateTarget');
+        optimizeCursorFollow(window.mmdManager, window.mmdManager?.cursorFollow, 'update');
         [
             window.live2dManager,
             window.vrmManager,
@@ -582,6 +592,108 @@
                 } catch (_) {}
             }
         });
+    }
+
+    function normalizeThreeScreenBounds(bounds) {
+        if (!bounds || typeof bounds !== 'object') return null;
+        const left = Number(bounds.left ?? bounds.minX);
+        const right = Number(bounds.right ?? bounds.maxX);
+        const top = Number(bounds.top ?? bounds.minY);
+        const bottom = Number(bounds.bottom ?? bounds.maxY);
+        if (![left, right, top, bottom].every(Number.isFinite)
+            || right <= left || bottom <= top) {
+            return null;
+        }
+        return {
+            left,
+            right,
+            top,
+            bottom,
+            width: right - left,
+            height: bottom - top,
+            centerX: (left + right) / 2,
+            centerY: (top + bottom) / 2
+        };
+    }
+
+    function readCursorFollowBounds(manager) {
+        const model = manager && manager.currentModel;
+        if (!manager || !model) return null;
+
+        const now = performance.now();
+        const interaction = manager.interaction;
+        const interactionSource = interaction?._cachedScreenBounds || null;
+        const interactionRevision = Number(
+            interaction?._lastModelUpdateTime ?? interaction?._lastBoundsUpdateTime
+        ) || 0;
+        let state = cursorBoundsStates.get(manager);
+
+        if (!state || state.model !== model) {
+            const freshBounds = typeof manager.getModelScreenBounds === 'function'
+                ? normalizeThreeScreenBounds(manager.getModelScreenBounds())
+                : null;
+            state = {
+                model,
+                bounds: freshBounds,
+                updatedAt: now,
+                interactionSource,
+                interactionRevision
+            };
+            cursorBoundsStates.set(manager, state);
+            return freshBounds;
+        }
+
+        if (interactionSource
+            && (interactionSource !== state.interactionSource
+                || interactionRevision !== state.interactionRevision)) {
+            const interactionBounds = normalizeThreeScreenBounds(interactionSource);
+            if (interactionBounds) {
+                state.bounds = interactionBounds;
+                state.updatedAt = now;
+            }
+            state.interactionSource = interactionSource;
+            state.interactionRevision = interactionRevision;
+            return state.bounds;
+        }
+
+        if (now - state.updatedAt < CURSOR_BOUNDS_REFRESH_MS) {
+            return state.bounds;
+        }
+
+        state.bounds = typeof manager.getModelScreenBounds === 'function'
+            ? normalizeThreeScreenBounds(manager.getModelScreenBounds())
+            : null;
+        state.updatedAt = now;
+        state.interactionSource = interactionSource;
+        state.interactionRevision = interactionRevision;
+        return state.bounds;
+    }
+
+    function optimizeCursorFollow(manager, cursorFollow, methodName) {
+        if (!manager || !cursorFollow || optimizedCursorFollowers.has(cursorFollow)) return;
+        const original = cursorFollow[methodName];
+        if (typeof original !== 'function') return;
+
+        const managerFacade = Object.create(manager);
+        Object.defineProperty(managerFacade, 'getModelScreenBounds', {
+            configurable: false,
+            enumerable: false,
+            value: () => readCursorFollowBounds(manager)
+        });
+
+        cursorFollow[methodName] = function (...args) {
+            const realManager = this.manager;
+            if (realManager !== manager) {
+                return original.apply(this, args);
+            }
+            this.manager = managerFacade;
+            try {
+                return original.apply(this, args);
+            } finally {
+                this.manager = realManager;
+            }
+        };
+        optimizedCursorFollowers.add(cursorFollow);
     }
 
     function capitalize(value) {
@@ -719,11 +831,18 @@
     }
 
     function getThreeBoundsRegion(manager, id) {
-        if (!manager || typeof manager.getModelScreenBounds !== 'function') return null;
+        if (!manager) return null;
         const canvas = manager.renderer && manager.renderer.domElement;
         if (!canvas || !isRendered(canvas)) return null;
         try {
-            const bounds = manager.getModelScreenBounds();
+            // The host interaction layer already maintains this at its own
+            // throttled cadence. Reading it keeps region reporting cheap and
+            // leaves the manager's public geometry method untouched.
+            const cachedBounds = normalizeThreeScreenBounds(manager.interaction?._cachedScreenBounds);
+            const bounds = cachedBounds
+                || (typeof manager.getModelScreenBounds === 'function'
+                    ? normalizeThreeScreenBounds(manager.getModelScreenBounds())
+                    : null);
             if (!bounds) return null;
             const rect = rectToPayload(bounds);
             return rect ? { component: 'avatar', kind: 'model-bounds', id, rect } : null;
@@ -744,6 +863,8 @@
         const regions = collectElementRegions();
         const avatarRegion = collectAvatarBoundsRegion();
         if (avatarRegion) regions.push(avatarRegion);
+        cachedElementRegions = regions.filter((region) => region !== avatarRegion);
+        cachedAvatarBoundsRegion = avatarRegion;
         return regions;
     }
 
@@ -753,6 +874,22 @@
             regionFrame = 0;
             reportRegions();
         });
+    }
+
+    function schedulePointerRegionRefresh() {
+        const now = performance.now();
+        const elapsed = now - lastPointerRegionRefreshAt;
+        if (elapsed >= POINTER_REGION_REFRESH_MS) {
+            lastPointerRegionRefreshAt = now;
+            scheduleRegionReport();
+            return;
+        }
+        if (pointerRegionRefreshTimer) return;
+        pointerRegionRefreshTimer = window.setTimeout(() => {
+            pointerRegionRefreshTimer = 0;
+            lastPointerRegionRefreshAt = performance.now();
+            scheduleRegionReport();
+        }, Math.max(0, POINTER_REGION_REFRESH_MS - elapsed));
     }
 
     function reportRegions(force) {
@@ -776,8 +913,21 @@
         return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
+    function pointInAvatarConservativeBounds(x, y, bounds) {
+        const centerX = (bounds.left + bounds.right) / 2;
+        const centerY = (bounds.top + bounds.bottom) / 2;
+        // Keep only the model-centered portion of the broad Three.js Box3.
+        // The 40% x 90% inset matches the narrow visible-avatar interaction
+        // zone while leaving the surrounding host page click-through.
+        const halfWidth = (bounds.right - bounds.left) * 0.5 * 0.4;
+        const halfHeight = (bounds.bottom - bounds.top) * 0.5 * 0.9;
+        if (!(halfWidth > 0) || !(halfHeight > 0)) return false;
+        return Math.abs(x - centerX) <= halfWidth
+            && Math.abs(y - centerY) <= halfHeight;
+    }
+
     function hitTestUi(x, y) {
-        const regions = collectElementRegions();
+        const regions = cachedElementRegions || collectElementRegions();
         for (let index = regions.length - 1; index >= 0; index -= 1) {
             const region = regions[index];
             if (pointInRect(x, y, region.rect)) return region;
@@ -834,15 +984,21 @@
     }
 
     function hitTestThreeManager(manager, x, y) {
-        const interaction = manager && manager.interaction;
-        if (!interaction || typeof interaction._hitTestModel !== 'function') return false;
+        if (!manager) return false;
         const canvas = manager.renderer && manager.renderer.domElement;
         if (!canvas || !isRendered(canvas)) return false;
-        try {
-            return interaction._hitTestModel(x, y) === true;
-        } catch (_) {
-            return false;
-        }
+
+        // Never raycast the animated hierarchy during hover. Prefer the
+        // adapter's bounded-cadence region report because it is refreshed
+        // without replacing host manager methods; use the host interaction
+        // cache only before the first report is available.
+        const expectedId = manager === window.vrmManager ? 'vrm-model' : 'mmd-model';
+        const reportedBounds = cachedAvatarBoundsRegion?.id === expectedId
+            ? normalizeThreeScreenBounds(cachedAvatarBoundsRegion.rect)
+            : null;
+        const interactionBounds = normalizeThreeScreenBounds(manager.interaction?._cachedScreenBounds);
+        const bounds = interactionBounds || reportedBounds;
+        return bounds ? pointInAvatarConservativeBounds(x, y, bounds) : false;
     }
 
     function hitTestPngtuber(x, y) {
@@ -915,7 +1071,9 @@
         // which are intentionally broader than configured Cubism hit areas.
         // Match that contract so limbs remain draggable while the rest of the
         // full-screen iframe can still pass through to the host page.
-        const live2dRegion = getLive2DBoundsRegion();
+        const live2dRegion = cachedAvatarBoundsRegion?.id === 'live2d-model'
+            ? cachedAvatarBoundsRegion
+            : null;
         if (live2dRegion && pointInRect(x, y, live2dRegion.rect)) {
             return {
                 interactive: true,
@@ -1102,20 +1260,23 @@
     });
     window.addEventListener('scroll', scheduleRegionReport, true);
     window.addEventListener('pointermove', (event) => {
-        scheduleRegionReport();
         relayPointerMove(event);
+        schedulePointerRegionRefresh();
     }, { passive: true, capture: true });
     window.addEventListener('pointerdown', (event) => {
         relayPointerImmediately(event, 'down');
     }, { passive: true, capture: true });
     window.addEventListener('pointerup', (event) => {
         relayPointerImmediately(event, 'up');
+        scheduleRegionReport();
     }, { passive: true, capture: true });
     window.addEventListener('pointercancel', (event) => {
         relayPointerImmediately(event, 'cancel');
+        scheduleRegionReport();
     }, { passive: true, capture: true });
     document.addEventListener('pointerleave', (event) => {
         relayPointerImmediately(event, 'leave');
+        scheduleRegionReport();
     }, { passive: true, capture: true });
     window.addEventListener('wheel', scheduleRegionReport, { passive: true });
     window.addEventListener('chat-surface-mode-change', (event) => {

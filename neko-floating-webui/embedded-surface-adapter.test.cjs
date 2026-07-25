@@ -150,6 +150,92 @@ test('component visibility and hit testing stay in extension-owned assets', () =
   assert.match(css, /#agent-task-hud-header/);
 });
 
+test('pointer hover reuses reported regions and refreshes them at bounded cadence', () => {
+  const collectBlock = adapter.slice(
+    adapter.indexOf('function collectRegions'),
+    adapter.indexOf('function scheduleRegionReport')
+  );
+  assert.match(collectBlock, /cachedElementRegions =/);
+  assert.match(collectBlock, /cachedAvatarBoundsRegion = avatarRegion/);
+
+  const uiHitBlock = adapter.slice(
+    adapter.indexOf('function hitTestUi'),
+    adapter.indexOf('function hitTestLive2D')
+  );
+  assert.match(uiHitBlock, /cachedElementRegions \|\| collectElementRegions\(\)/);
+
+  const pointerMoveListener = adapter.match(
+    /window\.addEventListener\('pointermove', \(event\) => \{([\s\S]*?)\}, \{ passive: true, capture: true \}\);/
+  );
+  assert.ok(pointerMoveListener, 'missing pointermove relay');
+  assert.match(pointerMoveListener[1], /relayPointerMove\(event\)/);
+  assert.match(pointerMoveListener[1], /schedulePointerRegionRefresh\(\)/);
+  assert.doesNotMatch(pointerMoveListener[1], /scheduleRegionReport\(\)/);
+
+  const refreshBlock = adapter.slice(
+    adapter.indexOf('function schedulePointerRegionRefresh'),
+    adapter.indexOf('function reportRegions')
+  );
+  assert.match(refreshBlock, /POINTER_REGION_REFRESH_MS/);
+  assert.match(refreshBlock, /pointerRegionRefreshTimer/);
+  assert.match(refreshBlock, /window\.setTimeout/);
+  assert.match(refreshBlock, /scheduleRegionReport\(\)/);
+});
+
+test('embedded 3D hover avoids raycasting without replacing host manager behavior', () => {
+  const threeRegionBlock = adapter.slice(
+    adapter.indexOf('function getThreeBoundsRegion'),
+    adapter.indexOf('function getPngtuberBoundsRegion')
+  );
+  assert.match(threeRegionBlock, /manager\.interaction\?\._cachedScreenBounds/);
+  assert.match(
+    threeRegionBlock,
+    /cachedBounds\s*\|\|\s*\(typeof manager\.getModelScreenBounds === 'function'/
+  );
+
+  const threeHitBlock = adapter.slice(
+    adapter.indexOf('function hitTestThreeManager'),
+    adapter.indexOf('function hitTestPngtuber')
+  );
+  assert.match(threeHitBlock, /cachedAvatarBoundsRegion/);
+  assert.match(threeHitBlock, /normalizeThreeScreenBounds\(manager\.interaction\?\._cachedScreenBounds\)/);
+  assert.match(threeHitBlock, /interactionBounds \|\| reportedBounds/);
+  assert.match(threeHitBlock, /pointInAvatarConservativeBounds/);
+  assert.doesNotMatch(threeHitBlock, /_hitTestModel|intersectObject/);
+  assert.doesNotMatch(adapter, /manager\.getModelScreenBounds\s*=(?!=)/);
+  assert.doesNotMatch(adapter, /activityOwner\._hasRenderActivity\s*=(?!=)/);
+  assert.doesNotMatch(adapter, /interaction\.updateModelBoundsCache\s*=(?!=)/);
+});
+
+test('cursor-follow bounds are cached without changing the host manager contract', () => {
+  const optimizeBlock = adapter.slice(
+    adapter.indexOf('function readCursorFollowBounds'),
+    adapter.indexOf('function capitalize')
+  );
+  assert.match(optimizeBlock, /CURSOR_BOUNDS_REFRESH_MS/);
+  assert.match(optimizeBlock, /state\.model !== model/);
+  assert.match(optimizeBlock, /manager\.interaction/);
+  assert.match(optimizeBlock, /Object\.create\(manager\)/);
+  assert.match(optimizeBlock, /Object\.defineProperty\(managerFacade, 'getModelScreenBounds'/);
+  assert.match(optimizeBlock, /const realManager = this\.manager/);
+  assert.match(optimizeBlock, /try \{/);
+  assert.match(optimizeBlock, /finally \{\s*this\.manager = realManager/);
+  assert.match(optimizeBlock, /original\.apply\(this, args\)/);
+  assert.doesNotMatch(adapter, /manager\.getModelScreenBounds\s*=(?!=)/);
+});
+
+test('3D passthrough keeps only the narrow model-centered part of broad bounds', () => {
+  const conservativeBoundsBlock = adapter.slice(
+    adapter.indexOf('function pointInAvatarConservativeBounds'),
+    adapter.indexOf('function hitTestUi')
+  );
+  assert.match(conservativeBoundsBlock, /halfWidth[\s\S]*?\* 0\.5 \* 0\.4/);
+  assert.match(conservativeBoundsBlock, /halfHeight[\s\S]*?\* 0\.5 \* 0\.9/);
+  assert.match(conservativeBoundsBlock, /Math\.abs\(x - centerX\) <= halfWidth/);
+  assert.match(conservativeBoundsBlock, /Math\.abs\(y - centerY\) <= halfHeight/);
+  assert.doesNotMatch(conservativeBoundsBlock, /\*\* 4/);
+});
+
 test('danmaku subtitle bounds stay controllable while the host requests passthrough', () => {
   for (const selector of [
     '#subtitle-display',

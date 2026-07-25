@@ -8,6 +8,14 @@
   const TRANSPARENT_CLASS = 'neko-floating-webui-transparent';
   const STYLE_ID = 'neko-floating-webui-transparent-runtime-style';
   const MAIN_WORLD_SCRIPT_ID = 'neko-floating-webui-transparent-main-world';
+  const REFLOW_RETRY_INTERVAL_MS = 250;
+  const REFLOW_RETRY_MAX_WAIT_MS = 10000;
+  let lastReflowWidth = -1;
+  let lastReflowHeight = -1;
+  let reflowFrame = 0;
+  let forcedReflowPending = false;
+  let forcedReflowStartedAt = 0;
+  let reflowRetryTimer = 0;
 
   const apply = () => {
     document.documentElement.classList.add(TRANSPARENT_CLASS);
@@ -44,7 +52,7 @@
       return;
     }
 
-    requestReflow();
+    requestReflow(event.data.force === true);
   });
 
   apply();
@@ -179,21 +187,76 @@
     (document.head || document.documentElement).appendChild(script);
   }
 
-  function requestReflow() {
+  function requestReflow(force = false) {
+    if (force) {
+      forcedReflowPending = true;
+      forcedReflowStartedAt = Date.now();
+    }
     if (isReflowInteractionActive()) {
+      if (forcedReflowPending) scheduleReflowRetry();
       return;
     }
-    window.dispatchEvent(new Event('resize'));
-
-    window.requestAnimationFrame(() => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    if (!forcedReflowPending
+        && width === lastReflowWidth
+        && height === lastReflowHeight) {
+      return;
+    }
+    if (reflowFrame) {
+      return;
+    }
+    reflowFrame = window.requestAnimationFrame(() => {
+      reflowFrame = 0;
       if (isReflowInteractionActive()) {
+        if (forcedReflowPending) scheduleReflowRetry();
         return;
       }
-      window.dispatchEvent(new Event('resize'));
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      if (!forcedReflowPending
+          && width === lastReflowWidth
+          && height === lastReflowHeight) {
+        return;
+      }
+      clearForcedReflowState();
+      lastReflowWidth = width;
+      lastReflowHeight = height;
       window.postMessage({
         type: 'NEKO_FLOATING_WEBUI_MAIN_WORLD_REFLOW'
       }, window.location.origin);
     });
+  }
+
+  function scheduleReflowRetry() {
+    if (reflowRetryTimer || !forcedReflowPending) {
+      return;
+    }
+    const remainingWait = REFLOW_RETRY_MAX_WAIT_MS - (Date.now() - forcedReflowStartedAt);
+    if (remainingWait <= 0) {
+      clearForcedReflowState();
+      return;
+    }
+    reflowRetryTimer = window.setTimeout(() => {
+      reflowRetryTimer = 0;
+      if (!forcedReflowPending) {
+        return;
+      }
+      if ((Date.now() - forcedReflowStartedAt) >= REFLOW_RETRY_MAX_WAIT_MS) {
+        clearForcedReflowState();
+        return;
+      }
+      requestReflow();
+    }, Math.min(REFLOW_RETRY_INTERVAL_MS, remainingWait));
+  }
+
+  function clearForcedReflowState() {
+    forcedReflowPending = false;
+    forcedReflowStartedAt = 0;
+    if (reflowRetryTimer) {
+      window.clearTimeout(reflowRetryTimer);
+      reflowRetryTimer = 0;
+    }
   }
 
   window.addEventListener('message', (event) => {

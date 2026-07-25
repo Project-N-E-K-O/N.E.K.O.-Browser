@@ -14,6 +14,8 @@
   const FRAME_BRIDGE_SENDER = 'neko-floating-frame-bridge';
   const EMBED_PROTOCOL_VERSION = 1;
   const EMBED_PROTOCOL_FALLBACK_MS = 1500;
+  const EMBED_HIT_TEST_TIMEOUT_MS = 500;
+  const EMBED_REGION_REFRESH_MS = 200;
   const CONTENT_RUNTIME_ID = globalThis.crypto?.randomUUID?.()
     || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const EMBED_SURFACE_COMPONENT_ORDER = Object.freeze([
@@ -87,8 +89,13 @@
   let embedPointerLock = null;
   let embedFallbackTimer = 0;
   let embedHitTestSequence = 0;
+  let embedHitTestFrame = 0;
+  let embedHitTestTimeout = 0;
   let pendingEmbedHitTest = null;
+  let queuedEmbedHitTest = null;
   let lastHostPointer = null;
+  let embedRegionRefreshTimer = 0;
+  let lastEmbedRegionRefreshAt = 0;
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== 'string') {
@@ -1233,12 +1240,15 @@
     if (!frame) {
       return;
     }
-    [0, 80, 240, 600, 1200].forEach((delay) => {
+    [0, 240, 1200].forEach((delay) => {
       window.setTimeout(() => {
         if (!isFrameReadyForWebui()) {
           return;
         }
-        postFrameBridgeMessage({ type: 'NEKO_FLOATING_WEBUI_REFLOW' });
+        postFrameBridgeMessage({
+          type: 'NEKO_FLOATING_WEBUI_REFLOW',
+          force: true
+        });
       }, delay);
     });
   }
@@ -1649,6 +1659,7 @@
     }
     if (data.type === 'NEKO_FLOATING_FRAME_ERROR') {
       frameWebuiReady = false;
+      resetEmbedPassthrough('frame-error');
       setOnline(false);
     }
   }
@@ -1696,7 +1707,7 @@
     embedRegions = [];
     embedViewport = null;
     embedPointerLock = null;
-    pendingEmbedHitTest = null;
+    cancelEmbedHitTests();
     if (embedFallbackTimer) {
       window.clearTimeout(embedFallbackTimer);
       embedFallbackTimer = 0;
@@ -1741,9 +1752,9 @@
 
   function postEmbedMessage(payload) {
     if (!isFrameReadyForWebui()) {
-      return;
+      return false;
     }
-    postFrameBridgeMessage(payload);
+    return postFrameBridgeMessage(payload);
   }
 
   function handleEmbedMessage(data) {
@@ -1836,11 +1847,30 @@
     if (!isEmbedPassthroughActive() || embedPointerLock !== null) {
       return;
     }
+    scheduleEmbedRegionRefresh();
     if (wakeButton && event.composedPath?.().includes(wakeButton)) {
       setFrameInteractive(false, 'wake-button');
       return;
     }
     updateFrameInteractionFromLastPointer('host-pointer');
+  }
+
+  function scheduleEmbedRegionRefresh() {
+    const now = performance.now();
+    const elapsed = now - lastEmbedRegionRefreshAt;
+    if (elapsed >= EMBED_REGION_REFRESH_MS) {
+      lastEmbedRegionRefreshAt = now;
+      postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+      return;
+    }
+    if (embedRegionRefreshTimer) {
+      return;
+    }
+    embedRegionRefreshTimer = window.setTimeout(() => {
+      embedRegionRefreshTimer = 0;
+      lastEmbedRegionRefreshAt = performance.now();
+      postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+    }, Math.max(0, EMBED_REGION_REFRESH_MS - elapsed));
   }
 
   function updateFrameInteractionFromLastPointer(reason) {
@@ -1849,12 +1879,17 @@
     }
     const point = hostPointToEmbedPoint(lastHostPointer.x, lastHostPointer.y);
     const region = findEmbedRegionAtPoint(point.x, point.y);
-    setFrameInteractive(Boolean(region), reason);
     if (region?.kind === 'model-bounds' && (region.id === 'vrm-model' || region.id === 'mmd-model')) {
+      // A Three.js Box3 is only a broad-phase candidate. Keep the iframe
+      // click-through until the embedded adapter confirms the tighter model
+      // hit area, otherwise the whole coarse box repeatedly steals pointer
+      // events while the async hit test is in flight.
+      setFrameInteractive(false, 'model-hit-test-pending');
       requestEmbedHitTest(point.x, point.y, lastHostPointer);
-    } else {
-      pendingEmbedHitTest = null;
+      return;
     }
+    cancelEmbedHitTests();
+    setFrameInteractive(Boolean(region), reason);
   }
 
   function setFrameInteractive(interactive, reason) {
@@ -1903,27 +1938,84 @@
   }
 
   function requestEmbedHitTest(x, y, hostPoint) {
-    const requestId = `hit-${++embedHitTestSequence}`;
-    pendingEmbedHitTest = {
-      requestId,
+    queuedEmbedHitTest = {
+      x,
+      y,
       hostX: hostPoint.x,
       hostY: hostPoint.y
     };
-    postEmbedMessage({ type: 'NEKO_EMBED_HIT_TEST', requestId, x, y });
+    scheduleEmbedHitTest();
+  }
+
+  function scheduleEmbedHitTest() {
+    if (embedHitTestFrame || pendingEmbedHitTest || !queuedEmbedHitTest) {
+      return;
+    }
+    embedHitTestFrame = window.requestAnimationFrame(() => {
+      embedHitTestFrame = 0;
+      if (pendingEmbedHitTest || !queuedEmbedHitTest || embedPointerLock !== null) {
+        return;
+      }
+      const request = queuedEmbedHitTest;
+      queuedEmbedHitTest = null;
+      const requestId = `hit-${++embedHitTestSequence}`;
+      const sent = postEmbedMessage({
+        type: 'NEKO_EMBED_HIT_TEST',
+        requestId,
+        x: request.x,
+        y: request.y
+      });
+      if (!sent) {
+        setFrameInteractive(false, 'model-hit-test-unavailable');
+        return;
+      }
+      pendingEmbedHitTest = { requestId, hostX: request.hostX, hostY: request.hostY };
+      embedHitTestTimeout = window.setTimeout(() => {
+        embedHitTestTimeout = 0;
+        if (!pendingEmbedHitTest || pendingEmbedHitTest.requestId !== requestId) {
+          return;
+        }
+        pendingEmbedHitTest = null;
+        setFrameInteractive(false, 'model-hit-test-timeout');
+        scheduleEmbedHitTest();
+      }, EMBED_HIT_TEST_TIMEOUT_MS);
+    });
+  }
+
+  function cancelEmbedHitTests() {
+    if (embedHitTestFrame) {
+      window.cancelAnimationFrame(embedHitTestFrame);
+      embedHitTestFrame = 0;
+    }
+    if (embedHitTestTimeout) {
+      window.clearTimeout(embedHitTestTimeout);
+      embedHitTestTimeout = 0;
+    }
+    pendingEmbedHitTest = null;
+    queuedEmbedHitTest = null;
   }
 
   function handleEmbedHitTestResult(data) {
-    if (!pendingEmbedHitTest || data.requestId !== pendingEmbedHitTest.requestId || embedPointerLock !== null) {
+    if (!pendingEmbedHitTest || data.requestId !== pendingEmbedHitTest.requestId) {
       return;
     }
     const pending = pendingEmbedHitTest;
     pendingEmbedHitTest = null;
+    if (embedHitTestTimeout) {
+      window.clearTimeout(embedHitTestTimeout);
+      embedHitTestTimeout = 0;
+    }
+    if (embedPointerLock !== null) {
+      return;
+    }
     if (!lastHostPointer
         || Math.abs(lastHostPointer.x - pending.hostX) > 1
         || Math.abs(lastHostPointer.y - pending.hostY) > 1) {
+      scheduleEmbedHitTest();
       return;
     }
     setFrameInteractive(data.interactive === true, 'model-hit-test');
+    scheduleEmbedHitTest();
   }
 
   function handleEmbeddedPointer(data) {
@@ -1931,6 +2023,10 @@
     const phase = String(data.phase || 'move');
     const hostPoint = embedPointToHostPoint(Number(data.x) || 0, Number(data.y) || 0);
     lastHostPointer = hostPoint;
+    // The embedded relay has already performed a hit test for this newer
+    // pointer state. Retire any older host-requested model hit test so its
+    // response or timeout cannot overwrite the authoritative relay result.
+    cancelEmbedHitTests();
 
     if (phase === 'down') {
       embedPointerLock = pointerId;
