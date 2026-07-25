@@ -1277,7 +1277,8 @@
         relayPointerImmediately(event, 'cancel');
         scheduleRegionReport();
     }, { passive: true, capture: true });
-    document.addEventListener('pointerleave', (event) => {
+    window.addEventListener('pointerout', (event) => {
+        if (event.relatedTarget !== null) return;
         relayPointerImmediately(event, 'leave');
         scheduleRegionReport();
     }, { passive: true, capture: true });

@@ -107,14 +107,20 @@ test('fullscreen iframe is click-through until an interactive region is selected
   );
   assert.match(
     interactionBlock,
-    /model-bounds[\s\S]*?setFrameInteractive\(false, 'model-hit-test-pending'\)[\s\S]*?requestEmbedHitTest/
+    /model-bounds[\s\S]*?pointInConservativeEmbedModelBounds[\s\S]*?setFrameInteractive\([\s\S]*?requestEmbedHitTest/
   );
   assert.ok(
-    interactionBlock.indexOf("setFrameInteractive(false, 'model-hit-test-pending')")
-      < interactionBlock.indexOf('setFrameInteractive(Boolean(region), reason)'),
-    'a broad 3D model region must not activate the iframe before its tighter hit test'
+    interactionBlock.indexOf('setFrameInteractive(')
+      < interactionBlock.indexOf('requestEmbedHitTest('),
+    'the narrow 3D model region must activate before its asynchronous confirmation'
   );
-  const pointerBlock = functionBlock('handleHostPointerMove', 'updateFrameInteractionFromLastPointer');
+  const conservativeBlock = functionBlock(
+    'pointInConservativeEmbedModelBounds',
+    'updateFrameInteractionFromLastPointer'
+  );
+  assert.match(conservativeBlock, /halfWidth[\s\S]*?\* 0\.5 \* 0\.4/);
+  assert.match(conservativeBlock, /halfHeight[\s\S]*?\* 0\.5 \* 0\.9/);
+  const pointerBlock = functionBlock('handleHostPointerMove', 'scheduleEmbedRegionRefresh');
   assert.ok(
     pointerBlock.indexOf('lastHostPointer =') < pointerBlock.indexOf('!isEmbedPassthroughActive()'),
     'the last host pointer must be remembered before fullscreen starts'

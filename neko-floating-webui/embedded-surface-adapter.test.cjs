@@ -174,6 +174,14 @@ test('pointer hover reuses reported regions and refreshes them at bounded cadenc
   assert.match(pointerMoveListener[1], /schedulePointerRegionRefresh\(\)/);
   assert.doesNotMatch(pointerMoveListener[1], /scheduleRegionReport\(\)/);
 
+  const pointerOutListener = adapter.match(
+    /window\.addEventListener\('pointerout', \(event\) => \{([\s\S]*?)\}, \{ passive: true, capture: true \}\);/
+  );
+  assert.ok(pointerOutListener, 'missing the document-exit pointer relay');
+  assert.match(pointerOutListener[1], /event\.relatedTarget !== null/);
+  assert.match(pointerOutListener[1], /relayPointerImmediately\(event, 'leave'\)/);
+  assert.doesNotMatch(adapter, /document\.addEventListener\('pointerleave'/);
+
   const refreshBlock = functionBlock('schedulePointerRegionRefresh', 'reportRegions');
   assert.match(refreshBlock, /POINTER_REGION_REFRESH_MS/);
   assert.match(refreshBlock, /pointerRegionRefreshTimer/);

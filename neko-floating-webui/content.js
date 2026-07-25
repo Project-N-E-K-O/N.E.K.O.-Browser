@@ -1878,6 +1878,21 @@
     }, Math.max(0, EMBED_REGION_REFRESH_MS - elapsed));
   }
 
+  function pointInConservativeEmbedModelBounds(x, y, region) {
+    const rect = region?.rect;
+    if (!rect) {
+      return false;
+    }
+    const centerX = (rect.left + rect.right) / 2;
+    const centerY = (rect.top + rect.bottom) / 2;
+    const halfWidth = (rect.right - rect.left) * 0.5 * 0.4;
+    const halfHeight = (rect.bottom - rect.top) * 0.5 * 0.9;
+    return halfWidth > 0
+      && halfHeight > 0
+      && Math.abs(x - centerX) <= halfWidth
+      && Math.abs(y - centerY) <= halfHeight;
+  }
+
   function updateFrameInteractionFromLastPointer(reason) {
     if (!isEmbedPassthroughActive() || embedPointerLock !== null || !lastHostPointer) {
       return;
@@ -1885,11 +1900,19 @@
     const point = hostPointToEmbedPoint(lastHostPointer.x, lastHostPointer.y);
     const region = findEmbedRegionAtPoint(point.x, point.y);
     if (region?.kind === 'model-bounds' && (region.id === 'vrm-model' || region.id === 'mmd-model')) {
-      // A Three.js Box3 is only a broad-phase candidate. Keep the iframe
-      // click-through until the embedded adapter confirms the tighter model
-      // hit area, otherwise the whole coarse box repeatedly steals pointer
-      // events while the async hit test is in flight.
-      setFrameInteractive(false, 'model-hit-test-pending');
+      // Use the same narrow model-centered inset as the embedded adapter so a
+      // fast pointerdown does not have to wait for a cross-frame round trip.
+      const conservativeHit = pointInConservativeEmbedModelBounds(point.x, point.y, region);
+      setFrameInteractive(
+        conservativeHit,
+        conservativeHit ? 'model-conservative-hit' : 'model-conservative-miss'
+      );
+      if (!conservativeHit) {
+        cancelEmbedHitTests();
+        return;
+      }
+      // Confirm against the embedded adapter's fresher bounds while hover is
+      // active. A pointerdown relay cancels this request and owns the drag.
       requestEmbedHitTest(point.x, point.y, lastHostPointer);
       return;
     }
