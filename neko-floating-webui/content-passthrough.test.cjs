@@ -36,6 +36,29 @@ test('fixed chat mode is included in both initial URL and live embed messages', 
   assert.match(applyBlock, /chatMode: chatSurfaceMode/);
 });
 
+test('the live embed handshake reports display mode without changing the frame URL', () => {
+  const connectBlock = functionBlock('sendEmbedConnect', 'postEmbedMessage');
+  assert.match(connectBlock, /type: 'NEKO_EMBED_CONNECT'/);
+  assert.match(connectBlock, /displayMode,/);
+  const applyBlock = functionBlock('applyDisplayMode', 'ensurePanel');
+  assert.match(
+    applyBlock,
+    /previousMode !== mode[\s\S]*?resetEmbedPassthrough\('display-mode-change'\)[\s\S]*?ensureFrameLoaded\(\)/,
+    'a live mode switch must reset the handshake before reusing the existing frame'
+  );
+  const ensureBlock = functionBlock('ensureFrameLoaded', 'unloadFrame');
+  assert.match(
+    ensureBlock,
+    /!embedReady && isEmbeddedSurfaceActive\(\) && frameWebuiReady[\s\S]*?startEmbeddedSurfaceHandshake\(\)/,
+    'the reused frame must reconnect with the current display mode'
+  );
+  assert.doesNotMatch(
+    functionBlock('getFrameTargetUrl', 'resetFrameBridgeState'),
+    /display_mode/,
+    'floating/fullscreen switches must keep the existing WebUI document'
+  );
+});
+
 test('component switches use strict canonical names and update a live embed', () => {
   assert.match(source, /const EMBED_SURFACE_COMPONENT_ORDER = Object\.freeze/);
   assert.match(source, /message\.type === 'NEKO_APPLY_SURFACE_COMPONENTS'/);
@@ -175,6 +198,16 @@ test('passthrough pointer movement refreshes embedded regions at bounded cadence
   assert.match(refreshBlock, /embedRegionRefreshTimer/);
   assert.match(refreshBlock, /window\.setTimeout/);
   assert.match(refreshBlock, /NEKO_EMBED_GET_REGIONS/);
+  assert.equal(
+    (refreshBlock.match(/const sent = postEmbedMessage\(/g) || []).length,
+    2,
+    'both immediate and delayed refreshes must observe whether the request was sent'
+  );
+  assert.equal(
+    (refreshBlock.match(/if \(sent\) \{\s*lastEmbedRegionRefreshAt =/g) || []).length,
+    2,
+    'failed region requests must not advance the refresh timestamp'
+  );
 
   const resetBlock = functionBlock('resetEmbedPassthrough', 'startEmbeddedSurfaceHandshake');
   assert.match(
@@ -202,6 +235,21 @@ test('the collapsed cat uses a normal click event while dragging suppresses acci
   const endDragBlock = functionBlock('endWakeDrag', 'handleWakeClick');
   assert.match(endDragBlock, /suppressWakeClick = true/);
   assert.doesNotMatch(endDragBlock, /wakePanel\(\)/);
+});
+
+test('expanding a collapsed floating panel clamps the full panel inside the viewport', () => {
+  const block = functionBlock('setMinimized', 'wakePanel');
+  assert.match(block, /expandingFloatingPanel = minimized === false/);
+  assert.match(block, /displayMode === 'floating'/);
+  assert.match(block, /panel\.dataset\.minimized === 'true'/);
+  assert.match(block, /const expandedPanel = normalizePanel\(currentPanel\)/);
+  assert.match(block, /currentPanel = expandedPanel/);
+  assert.match(block, /applyPanelStyles\(panel, currentPanel\)/);
+  assert.match(block, /saveState\(\{ panel: currentPanel \}\)/);
+  assert.ok(
+    block.indexOf('applyPanelStyles(panel, currentPanel)') < block.indexOf('ensureFrameLoaded()'),
+    'the panel must be moved inside the viewport before its WebUI is shown'
+  );
 });
 
 test('a new content runtime replaces stale panel DOM left by an extension reload', () => {

@@ -66,6 +66,176 @@ test('the adapter delegates moved chat viewport correction to the host geometry 
   assert.doesNotMatch(adapter, /shell\.style\.(left|top|transform)\s*=/);
 });
 
+test('floating avatar rebound uses a visible-ratio buffer and preserves fullscreen behavior', () => {
+  assert.match(adapter, /FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO = 0\.75/);
+  assert.match(adapter, /FLOATING_AVATAR_HORIZONTAL_TARGET_RATIO = 0\.82/);
+  assert.match(adapter, /FLOATING_AVATAR_VERTICAL_TRIGGER_RATIO = 0\.65/);
+  assert.match(adapter, /FLOATING_AVATAR_VERTICAL_TARGET_RATIO = 0\.75/);
+  assert.match(adapter, /FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO = 0\.06/);
+  assert.match(adapter, /FLOATING_AVATAR_CORE_TARGET_INSET_RATIO = 0\.12/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TRIGGER_RATIO = 0\.88/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TARGET_RATIO = 0\.94/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TRIGGER_RATIO = 0\.82/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TARGET_RATIO = 0\.9/);
+  assert.match(adapter, /data\.displayMode !== undefined\) setEmbeddedDisplayMode\(data\.displayMode\)/);
+  assert.match(adapter, /displayModeAware: true/);
+
+  const live2dBlock = adapter.slice(
+    adapter.indexOf('function installLive2DSnapAdapter'),
+    adapter.indexOf('function getFloatingLive2DSnap')
+  );
+  assert.match(live2dBlock, /embeddedDisplayMode === 'floating'/);
+  assert.match(live2dBlock, /options\.threshold === undefined/);
+  assert.match(live2dBlock, /checkSnapRequired\.call\(this, model, options\)/);
+
+  const threeBlock = adapter.slice(
+    adapter.indexOf('function installThreeModelSnapAdapter'),
+    adapter.indexOf('function getFloatingAxisCorrection')
+  );
+  assert.match(threeBlock, /embeddedDisplayMode === 'floating'/);
+  assert.match(threeBlock, /getFloatingThreeModelTarget/);
+  assert.match(adapter, /installThreeModelSnapAdapter\(window\.vrmManager\)/);
+  assert.match(adapter, /installThreeModelSnapAdapter\(window\.mmdManager\)/);
+  assert.match(adapter, /manager\.getBodyScreenRectInfo\(\)\?\.rect/);
+  assert.match(adapter, /getBone\('leftToes'\) \|\| getBone\('leftFoot'\)/);
+  assert.match(adapter, /getBone\('rightToes'\) \|\| getBone\('rightFoot'\)/);
+  assert.match(adapter, /leftPosition\.z > -1/);
+  assert.match(adapter, /leftPosition\.z < 1/);
+});
+
+test('embedded 3D models recover after viewport changes in floating and fullscreen modes', () => {
+  const resizeListener = adapter.match(
+    /window\.addEventListener\('resize', \(\) => \{([^{}]*)\}\);/
+  );
+  assert.ok(resizeListener, 'missing the window resize listener');
+  assert.match(resizeListener[1], /scheduleThreeModelViewportRecovery\(\)/);
+  assert.match(
+    adapter,
+    /eventName === 'vrm-model-loaded' \|\| eventName === 'mmd-model-loaded'[\s\S]*?scheduleThreeModelViewportRecovery\(\)/
+  );
+
+  const schedulerBlock = functionBlock(
+    'scheduleThreeModelViewportRecovery',
+    'getLive2DHorizontalCore'
+  );
+  assert.match(schedulerBlock, /EMBED_DISPLAY_MODES\.includes\(embeddedDisplayMode\)/);
+  assert.doesNotMatch(schedulerBlock, /embeddedDisplayMode === 'floating'/);
+  assert.match(schedulerBlock, /window\.requestAnimationFrame/);
+  assert.match(schedulerBlock, /window\.clearTimeout\(threeModelViewportRecoveryTimer\)/);
+
+  const position = {
+    x: 1,
+    y: 2,
+    z: 3,
+    clone() {
+      return { x: this.x, y: this.y, z: this.z };
+    },
+    copy(target) {
+      this.x = target.x;
+      this.y = target.y;
+      this.z = target.z;
+    }
+  };
+  let matrixUpdates = 0;
+  let cacheDeletes = 0;
+  const root = {
+    position,
+    updateMatrixWorld(force) {
+      assert.equal(force, true);
+      matrixUpdates += 1;
+    }
+  };
+  const manager = {
+    interaction: {
+      isDragging: false,
+      _isSnappingModel: false,
+      clampModelPosition(candidate) {
+        assert.notEqual(candidate, position);
+        return { x: 4, y: 5, z: 6 };
+      }
+    }
+  };
+  let proportionalRecoveryCalls = 0;
+  const recover = executableFunction(
+    'recoverThreeModelViewport',
+    'recoverThreeModelViewports',
+    {
+      EMBED_DISPLAY_MODES: ['floating', 'fullscreen'],
+      embeddedDisplayMode: 'fullscreen',
+      getThreeModelRoot: () => root,
+      getThreeModelRecoveryTarget: () => {
+        proportionalRecoveryCalls += 1;
+        return { x: 4, y: 5, z: 6 };
+      },
+      cursorBoundsStates: { delete: () => { cacheDeletes += 1; } }
+    }
+  );
+
+  assert.equal(recover(manager), true);
+  assert.deepEqual({ x: position.x, y: position.y, z: position.z }, { x: 4, y: 5, z: 6 });
+  assert.equal(matrixUpdates, 1);
+  assert.equal(cacheDeletes, 1);
+  assert.equal(proportionalRecoveryCalls, 1);
+
+  manager.interaction.isDragging = true;
+  assert.equal(recover(manager), false, 'viewport recovery must not fight an active drag');
+
+  const recoveryBlock = functionBlock('recoverThreeModelViewport', 'recoverThreeModelViewports');
+  assert.match(
+    recoveryBlock,
+    /getThreeModelRecoveryTarget\(manager, currentPosition\)[\s\S]*?interaction\.clampModelPosition\(currentPosition\)/
+  );
+  assert.doesNotMatch(recoveryBlock, /_snapModelIntoScreen|_savePositionAfterInteraction/);
+});
+
+test('floating avatar rebound allows partial overflow and restores only to the target ratio', () => {
+  const start = adapter.indexOf('function getFloatingAxisCorrection');
+  const end = adapter.indexOf('\n    function capitalize', start);
+  assert.notEqual(start, -1, 'missing getFloatingAxisCorrection');
+  assert.notEqual(end, -1, 'missing end of getFloatingAxisCorrection');
+  const functionSource = adapter.slice(start, end);
+  const getCorrection = new Function(`${functionSource}; return getFloatingAxisCorrection;`)();
+
+  assert.equal(getCorrection(-60, 240, 0, 420, 0.75, 0.82), 0, '20% horizontal overflow remains adjustable');
+  assert.ok(
+    Math.abs(getCorrection(-90, 210, 0, 420, 0.75, 0.82) - 36) < 1e-9,
+    'left overflow restores to 82% visible'
+  );
+  assert.ok(
+    Math.abs(getCorrection(210, 510, 0, 420, 0.75, 0.82) + 36) < 1e-9,
+    'right overflow restores symmetrically'
+  );
+  assert.equal(getCorrection(-100, 500, 0, 420, 0.75, 0.82), 0, 'an oversized model covering the viewport stays put');
+  assert.equal(getCorrection(-90, 210, 0, 420, 0.65, 0.75), 0, 'the same overflow remains valid vertically');
+});
+
+test('horizontal rebound keeps the character core and feet inside a safety band', () => {
+  const start = adapter.indexOf('function getFloatingCoreCorrection');
+  const end = adapter.indexOf('\n    function getFloatingAxisCorrection', start);
+  assert.notEqual(start, -1, 'missing getFloatingCoreCorrection');
+  assert.notEqual(end, -1, 'missing end of horizontal core helpers');
+  const helperSource = adapter.slice(start, end);
+  const helpers = new Function(
+    'FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO',
+    'FLOATING_AVATAR_CORE_TARGET_INSET_RATIO',
+    `${helperSource}; return { getFloatingCoreCorrection, combineHorizontalCorrections };`
+  )(0.06, 0.12);
+
+  assert.ok(
+    Math.abs(helpers.getFloatingCoreCorrection(10, 0, 420) - 40.4) < 1e-9,
+    'a left-side core moves into the 12% safety band'
+  );
+  assert.equal(helpers.getFloatingCoreCorrection(30, 0, 420), 0, 'a core outside the 6% trigger band stays adjustable');
+  assert.ok(
+    Math.abs(helpers.getFloatingCoreCorrection(410, 0, 420) + 40.4) < 1e-9,
+    'right-side core correction is symmetric'
+  );
+  assert.ok(
+    Math.abs(helpers.combineHorizontalCorrections(20, 40.4) - 40.4) < 1e-9,
+    'core visibility wins when bounds correction is insufficient'
+  );
+});
+
 test('crossing the mobile breakpoint rebuilds only the active avatar controls', () => {
   assert.match(adapter, /const MOBILE_VIEWPORT_MAX_WIDTH = 768/);
   assert.match(adapter, /mobileViewport === lastMobileViewport/);
@@ -163,6 +333,18 @@ test('component visibility and hit testing stay in extension-owned assets', () =
   assert.match(css, /#agent-task-hud-header/);
 });
 
+test('leaving a fullscreen return cat does not end the embedded drag lock', () => {
+  const leaveListener = adapter.match(
+    /window\.addEventListener\('pointerout', \(event\) => \{([\s\S]*?)\}, \{ passive: true, capture: true \}\);/
+  );
+  assert.ok(leaveListener, 'missing the embedded pointerout listener');
+  assert.match(
+    leaveListener[1],
+    /if\s*\(\s*event\.relatedTarget\s*\)\s*return;[\s\S]*?finishActiveThreeModelDrags\(event, true\)[\s\S]*?relayPointerImmediately\(event, 'leave'\)/,
+    'descendant pointerleave events must be ignored before the drag lock is released'
+  );
+});
+
 test('pointer hover reuses reported regions and refreshes them at bounded cadence', () => {
   const collectBlock = functionBlock('collectRegions', 'scheduleRegionReport');
   assert.match(collectBlock, /cachedElementRegions =/);
@@ -189,7 +371,7 @@ test('pointer hover reuses reported regions and refreshes them at bounded cadenc
     /window\.addEventListener\('pointerout', \(event\) => \{([\s\S]*?)\}, \{ passive: true, capture: true \}\);/
   );
   assert.ok(pointerOutListener, 'missing the document-exit pointer relay');
-  assert.match(pointerOutListener[1], /event\.relatedTarget !== null/);
+  assert.match(pointerOutListener[1], /if \(event\.relatedTarget\) return/);
   assert.match(pointerOutListener[1], /finishActiveThreeModelDrags\(event, true\)/);
   assert.match(pointerOutListener[1], /relayPointerImmediately\(event, 'leave'\)/);
   assert.doesNotMatch(adapter, /document\.addEventListener\('pointerleave'/);
