@@ -236,10 +236,9 @@ test('leaving a fullscreen return cat does not end the embedded drag lock', () =
     /document\.addEventListener\('pointerleave', \(event\) => \{([\s\S]*?)\}, \{ passive: true, capture: true \}\);/
   );
   assert.ok(leaveListener, 'missing the embedded pointerleave listener');
-  assert.match(leaveListener[1], /event\.target !== document\.documentElement/);
-  assert.match(leaveListener[1], /\|\| event\.relatedTarget\) return/);
-  assert.ok(
-    leaveListener[1].indexOf('event.target') < leaveListener[1].indexOf("relayPointerImmediately(event, 'leave')"),
+  assert.match(
+    leaveListener[1],
+    /if\s*\(\s*event\.target !== document\.documentElement\s*\|\|\s*event\.relatedTarget\s*\)\s*return;[\s\S]*?relayPointerImmediately\(event, 'leave'\)/,
     'descendant pointerleave events must be ignored before the drag lock is released'
   );
 });

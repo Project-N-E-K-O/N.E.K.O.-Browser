@@ -40,6 +40,18 @@ test('the live embed handshake reports display mode without changing the frame U
   const connectBlock = functionBlock('sendEmbedConnect', 'postEmbedMessage');
   assert.match(connectBlock, /type: 'NEKO_EMBED_CONNECT'/);
   assert.match(connectBlock, /displayMode,/);
+  const applyBlock = functionBlock('applyDisplayMode', 'ensurePanel');
+  assert.match(
+    applyBlock,
+    /previousMode !== mode[\s\S]*?resetEmbedPassthrough\('display-mode-change'\)[\s\S]*?ensureFrameLoaded\(\)/,
+    'a live mode switch must reset the handshake before reusing the existing frame'
+  );
+  const ensureBlock = functionBlock('ensureFrameLoaded', 'unloadFrame');
+  assert.match(
+    ensureBlock,
+    /!embedReady && isEmbeddedSurfaceActive\(\) && frameWebuiReady[\s\S]*?startEmbeddedSurfaceHandshake\(\)/,
+    'the reused frame must reconnect with the current display mode'
+  );
   assert.doesNotMatch(
     functionBlock('getFrameTargetUrl', 'resetFrameBridgeState'),
     /display_mode/,

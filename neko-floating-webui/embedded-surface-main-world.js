@@ -742,7 +742,7 @@
                 FLOATING_AVATAR_VERTICAL_TARGET_RATIO
             );
             if (correctionX === undefined || correctionY === undefined) return null;
-            if (correctionX === 0 && correctionY === 0) return position;
+            if (correctionX === 0 && correctionY === 0) return position.clone();
 
             const cameraDistance = camera.position.distanceTo(position);
             const fov = Number(camera.fov) * (Math.PI / 180);
