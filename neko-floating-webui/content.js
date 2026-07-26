@@ -1883,8 +1883,13 @@
     const now = performance.now();
     const elapsed = now - lastEmbedRegionRefreshAt;
     if (elapsed >= EMBED_REGION_REFRESH_MS) {
-      lastEmbedRegionRefreshAt = now;
-      postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+      const sent = postEmbedMessage({
+        type: 'NEKO_EMBED_GET_REGIONS',
+        requestId: `regions-${Date.now()}`
+      });
+      if (sent) {
+        lastEmbedRegionRefreshAt = now;
+      }
       return;
     }
     if (embedRegionRefreshTimer) {
@@ -1892,8 +1897,13 @@
     }
     embedRegionRefreshTimer = window.setTimeout(() => {
       embedRegionRefreshTimer = 0;
-      lastEmbedRegionRefreshAt = performance.now();
-      postEmbedMessage({ type: 'NEKO_EMBED_GET_REGIONS', requestId: `regions-${Date.now()}` });
+      const sent = postEmbedMessage({
+        type: 'NEKO_EMBED_GET_REGIONS',
+        requestId: `regions-${Date.now()}`
+      });
+      if (sent) {
+        lastEmbedRegionRefreshAt = performance.now();
+      }
     }, Math.max(0, EMBED_REGION_REFRESH_MS - elapsed));
   }
 

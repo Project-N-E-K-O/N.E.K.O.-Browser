@@ -198,6 +198,16 @@ test('passthrough pointer movement refreshes embedded regions at bounded cadence
   assert.match(refreshBlock, /embedRegionRefreshTimer/);
   assert.match(refreshBlock, /window\.setTimeout/);
   assert.match(refreshBlock, /NEKO_EMBED_GET_REGIONS/);
+  assert.equal(
+    (refreshBlock.match(/const sent = postEmbedMessage\(/g) || []).length,
+    2,
+    'both immediate and delayed refreshes must observe whether the request was sent'
+  );
+  assert.equal(
+    (refreshBlock.match(/if \(sent\) \{\s*lastEmbedRegionRefreshAt =/g) || []).length,
+    2,
+    'failed region requests must not advance the refresh timestamp'
+  );
 
   const resetBlock = functionBlock('resetEmbedPassthrough', 'startEmbeddedSurfaceHandshake');
   assert.match(
