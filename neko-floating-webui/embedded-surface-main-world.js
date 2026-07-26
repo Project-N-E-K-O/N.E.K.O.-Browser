@@ -24,6 +24,12 @@
     const FLOATING_AVATAR_VERTICAL_TARGET_RATIO = 0.75;
     const FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO = 0.06;
     const FLOATING_AVATAR_CORE_TARGET_INSET_RATIO = 0.12;
+    const THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TRIGGER_RATIO = 0.88;
+    const THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TARGET_RATIO = 0.94;
+    const THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TRIGGER_RATIO = 0.82;
+    const THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TARGET_RATIO = 0.9;
+    const THREE_MODEL_VIEWPORT_RECOVERY_CORE_TRIGGER_INSET_RATIO = 0.08;
+    const THREE_MODEL_VIEWPORT_RECOVERY_CORE_TARGET_INSET_RATIO = 0.16;
     const POINTER_REGION_REFRESH_MS = 200;
     const CURSOR_BOUNDS_REFRESH_MS = 200;
     const COMPONENT_ORDER = Object.freeze(['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']);
@@ -105,6 +111,8 @@
     let cachedElementRegions = null;
     let cachedAvatarBoundsRegion = null;
     let responsiveViewportFrame = 0;
+    let threeModelViewportRecoveryFrame = 0;
+    let threeModelViewportRecoveryTimer = 0;
     let lastMobileViewport = isMobileViewport();
     let requestedAvatarForm = initialAvatarForm;
     let avatarFormRequestId = initialAvatarFormRequestId;
@@ -159,6 +167,7 @@
         embeddedDisplayMode = nextMode;
         document.documentElement.dataset.nekoEmbeddedDisplayMode = nextMode;
         installFloatingAvatarSnapAdapters();
+        scheduleThreeModelViewportRecovery();
         return embeddedDisplayMode;
     }
 
@@ -723,8 +732,31 @@
     }
 
     function getFloatingThreeModelTarget(manager, position) {
+        return getThreeModelViewportTarget(manager, position, {
+            horizontalTriggerRatio: FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO,
+            horizontalTargetRatio: FLOATING_AVATAR_HORIZONTAL_TARGET_RATIO,
+            verticalTriggerRatio: FLOATING_AVATAR_VERTICAL_TRIGGER_RATIO,
+            verticalTargetRatio: FLOATING_AVATAR_VERTICAL_TARGET_RATIO,
+            coreTriggerInsetRatio: FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO,
+            coreTargetInsetRatio: FLOATING_AVATAR_CORE_TARGET_INSET_RATIO
+        });
+    }
+
+    function getThreeModelRecoveryTarget(manager, position) {
+        return getThreeModelViewportTarget(manager, position, {
+            horizontalTriggerRatio: THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TRIGGER_RATIO,
+            horizontalTargetRatio: THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TARGET_RATIO,
+            verticalTriggerRatio: THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TRIGGER_RATIO,
+            verticalTargetRatio: THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TARGET_RATIO,
+            coreTriggerInsetRatio: THREE_MODEL_VIEWPORT_RECOVERY_CORE_TRIGGER_INSET_RATIO,
+            coreTargetInsetRatio: THREE_MODEL_VIEWPORT_RECOVERY_CORE_TARGET_INSET_RATIO
+        });
+    }
+
+    function getThreeModelViewportTarget(manager, position, policy) {
         if (!manager || !position || typeof position.clone !== 'function') return null;
         if (typeof manager.getModelScreenBounds !== 'function') return null;
+        if (!policy) return null;
 
         const camera = manager.camera;
         const renderer = manager.renderer;
@@ -741,19 +773,25 @@
                 bounds.right,
                 viewport.left,
                 viewport.right,
-                FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO,
-                FLOATING_AVATAR_HORIZONTAL_TARGET_RATIO
+                policy.horizontalTriggerRatio,
+                policy.horizontalTargetRatio
             );
             const coreX = getThreeHorizontalCore(manager, bounds, viewport);
-            const coreCorrectionX = getFloatingCoreCorrection(coreX, viewport.left, viewport.right);
+            const coreCorrectionX = getFloatingCoreCorrection(
+                coreX,
+                viewport.left,
+                viewport.right,
+                policy.coreTriggerInsetRatio,
+                policy.coreTargetInsetRatio
+            );
             const correctionX = combineHorizontalCorrections(boundsCorrectionX, coreCorrectionX);
             const correctionY = getFloatingAxisCorrection(
                 bounds.top,
                 bounds.bottom,
                 viewport.top,
                 viewport.bottom,
-                FLOATING_AVATAR_VERTICAL_TRIGGER_RATIO,
-                FLOATING_AVATAR_VERTICAL_TARGET_RATIO
+                policy.verticalTriggerRatio,
+                policy.verticalTargetRatio
             );
             if (correctionX === undefined || correctionY === undefined) return null;
             if (correctionX === 0 && correctionY === 0) return position.clone();
@@ -772,6 +810,66 @@
         } catch (_) {
             return null;
         }
+    }
+
+    function recoverThreeModelViewport(manager) {
+        if (!EMBED_DISPLAY_MODES.includes(embeddedDisplayMode)) return false;
+        const interaction = manager && manager.interaction;
+        const modelRoot = getThreeModelRoot(manager);
+        if (!interaction || interaction.isDragging || interaction._isSnappingModel) return false;
+        if (!modelRoot || !modelRoot.position || typeof modelRoot.position.clone !== 'function') return false;
+        if (typeof modelRoot.position.copy !== 'function'
+            || typeof interaction.clampModelPosition !== 'function') return false;
+
+        try {
+            // Window resizing needs a stronger target than the host's default
+            // "keep 200px visible" drag clamp. Use a stricter proportional
+            // recovery policy in both display modes, with the host clamp as a
+            // fallback when model bounds are not ready yet.
+            const currentPosition = modelRoot.position.clone();
+            const target = getThreeModelRecoveryTarget(manager, currentPosition)
+                || interaction.clampModelPosition(currentPosition);
+            if (!target) return false;
+            const delta = ['x', 'y', 'z'].map((axis) => (
+                Number(target[axis]) - Number(modelRoot.position[axis])
+            ));
+            if (!delta.every(Number.isFinite)
+                || delta.every((value) => Math.abs(value) < 0.000001)) {
+                return false;
+            }
+
+            modelRoot.position.copy(target);
+            if (typeof modelRoot.updateMatrixWorld === 'function') modelRoot.updateMatrixWorld(true);
+            cursorBoundsStates.delete(manager);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function recoverThreeModelViewports() {
+        let corrected = false;
+        [window.vrmManager, window.mmdManager].forEach((manager) => {
+            corrected = recoverThreeModelViewport(manager) || corrected;
+        });
+        if (corrected) scheduleRegionReport();
+        return corrected;
+    }
+
+    function scheduleThreeModelViewportRecovery() {
+        if (!EMBED_DISPLAY_MODES.includes(embeddedDisplayMode)) return;
+        if (!threeModelViewportRecoveryFrame) {
+            threeModelViewportRecoveryFrame = window.requestAnimationFrame(() => {
+                threeModelViewportRecoveryFrame = 0;
+                recoverThreeModelViewports();
+            });
+        }
+
+        window.clearTimeout(threeModelViewportRecoveryTimer);
+        threeModelViewportRecoveryTimer = window.setTimeout(() => {
+            threeModelViewportRecoveryTimer = 0;
+            recoverThreeModelViewports();
+        }, 160);
     }
 
     function getLive2DHorizontalCore(manager, bounds) {
@@ -838,7 +936,13 @@
         }
     }
 
-    function getFloatingCoreCorrection(corePosition, viewportStart, viewportEnd) {
+    function getFloatingCoreCorrection(
+        corePosition,
+        viewportStart,
+        viewportEnd,
+        triggerInsetRatio = FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO,
+        targetInsetRatio = FLOATING_AVATAR_CORE_TARGET_INSET_RATIO
+    ) {
         corePosition = Number(corePosition);
         viewportStart = Number(viewportStart);
         viewportEnd = Number(viewportEnd);
@@ -846,8 +950,8 @@
         const viewportSize = viewportEnd - viewportStart;
         if (!(viewportSize > 0)) return undefined;
 
-        const triggerInset = viewportSize * FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO;
-        const targetInset = viewportSize * FLOATING_AVATAR_CORE_TARGET_INSET_RATIO;
+        const triggerInset = viewportSize * triggerInsetRatio;
+        const targetInset = viewportSize * targetInsetRatio;
         if (corePosition < viewportStart + triggerInset) {
             return viewportStart + targetInset - corePosition;
         }
@@ -1788,6 +1892,7 @@
     });
     window.addEventListener('resize', () => {
         scheduleResponsiveViewportSync();
+        scheduleThreeModelViewportRecovery();
         scheduleChatVisibilityCheck();
         scheduleRegionReport();
     });
@@ -1842,6 +1947,9 @@
             syncAvatarRendering();
             scheduleAvatarFormSync(0, 'host-event');
             scheduleResponsiveViewportSync();
+            if (eventName === 'vrm-model-loaded' || eventName === 'mmd-model-loaded') {
+                scheduleThreeModelViewportRecovery();
+            }
             scheduleRegionReport();
         });
     });

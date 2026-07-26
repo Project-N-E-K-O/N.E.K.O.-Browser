@@ -73,6 +73,10 @@ test('floating avatar rebound uses a visible-ratio buffer and preserves fullscre
   assert.match(adapter, /FLOATING_AVATAR_VERTICAL_TARGET_RATIO = 0\.75/);
   assert.match(adapter, /FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO = 0\.06/);
   assert.match(adapter, /FLOATING_AVATAR_CORE_TARGET_INSET_RATIO = 0\.12/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TRIGGER_RATIO = 0\.88/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_HORIZONTAL_TARGET_RATIO = 0\.94/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TRIGGER_RATIO = 0\.82/);
+  assert.match(adapter, /THREE_MODEL_VIEWPORT_RECOVERY_VERTICAL_TARGET_RATIO = 0\.9/);
   assert.match(adapter, /data\.displayMode !== undefined\) setEmbeddedDisplayMode\(data\.displayMode\)/);
   assert.match(adapter, /displayModeAware: true/);
 
@@ -97,6 +101,91 @@ test('floating avatar rebound uses a visible-ratio buffer and preserves fullscre
   assert.match(adapter, /getBone\('rightToes'\) \|\| getBone\('rightFoot'\)/);
   assert.match(adapter, /leftPosition\.z > -1/);
   assert.match(adapter, /leftPosition\.z < 1/);
+});
+
+test('embedded 3D models recover after viewport changes in floating and fullscreen modes', () => {
+  const resizeListener = adapter.match(
+    /window\.addEventListener\('resize', \(\) => \{([^{}]*)\}\);/
+  );
+  assert.ok(resizeListener, 'missing the window resize listener');
+  assert.match(resizeListener[1], /scheduleThreeModelViewportRecovery\(\)/);
+  assert.match(
+    adapter,
+    /eventName === 'vrm-model-loaded' \|\| eventName === 'mmd-model-loaded'[\s\S]*?scheduleThreeModelViewportRecovery\(\)/
+  );
+
+  const schedulerBlock = functionBlock(
+    'scheduleThreeModelViewportRecovery',
+    'getLive2DHorizontalCore'
+  );
+  assert.match(schedulerBlock, /EMBED_DISPLAY_MODES\.includes\(embeddedDisplayMode\)/);
+  assert.doesNotMatch(schedulerBlock, /embeddedDisplayMode === 'floating'/);
+  assert.match(schedulerBlock, /window\.requestAnimationFrame/);
+  assert.match(schedulerBlock, /window\.clearTimeout\(threeModelViewportRecoveryTimer\)/);
+
+  const position = {
+    x: 1,
+    y: 2,
+    z: 3,
+    clone() {
+      return { x: this.x, y: this.y, z: this.z };
+    },
+    copy(target) {
+      this.x = target.x;
+      this.y = target.y;
+      this.z = target.z;
+    }
+  };
+  let matrixUpdates = 0;
+  let cacheDeletes = 0;
+  const root = {
+    position,
+    updateMatrixWorld(force) {
+      assert.equal(force, true);
+      matrixUpdates += 1;
+    }
+  };
+  const manager = {
+    interaction: {
+      isDragging: false,
+      _isSnappingModel: false,
+      clampModelPosition(candidate) {
+        assert.notEqual(candidate, position);
+        return { x: 4, y: 5, z: 6 };
+      }
+    }
+  };
+  let proportionalRecoveryCalls = 0;
+  const recover = executableFunction(
+    'recoverThreeModelViewport',
+    'recoverThreeModelViewports',
+    {
+      EMBED_DISPLAY_MODES: ['floating', 'fullscreen'],
+      embeddedDisplayMode: 'fullscreen',
+      getThreeModelRoot: () => root,
+      getThreeModelRecoveryTarget: () => {
+        proportionalRecoveryCalls += 1;
+        return { x: 4, y: 5, z: 6 };
+      },
+      cursorBoundsStates: { delete: () => { cacheDeletes += 1; } }
+    }
+  );
+
+  assert.equal(recover(manager), true);
+  assert.deepEqual({ x: position.x, y: position.y, z: position.z }, { x: 4, y: 5, z: 6 });
+  assert.equal(matrixUpdates, 1);
+  assert.equal(cacheDeletes, 1);
+  assert.equal(proportionalRecoveryCalls, 1);
+
+  manager.interaction.isDragging = true;
+  assert.equal(recover(manager), false, 'viewport recovery must not fight an active drag');
+
+  const recoveryBlock = functionBlock('recoverThreeModelViewport', 'recoverThreeModelViewports');
+  assert.match(
+    recoveryBlock,
+    /getThreeModelRecoveryTarget\(manager, currentPosition\)[\s\S]*?interaction\.clampModelPosition\(currentPosition\)/
+  );
+  assert.doesNotMatch(recoveryBlock, /_snapModelIntoScreen|_savePositionAfterInteraction/);
 });
 
 test('floating avatar rebound allows partial overflow and restores only to the target ratio', () => {
