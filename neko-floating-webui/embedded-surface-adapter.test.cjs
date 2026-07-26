@@ -82,6 +82,8 @@ test('floating avatar rebound uses a visible-ratio buffer and preserves fullscre
   assert.match(adapter, /manager\.getBodyScreenRectInfo\(\)\?\.rect/);
   assert.match(adapter, /getBone\('leftToes'\) \|\| getBone\('leftFoot'\)/);
   assert.match(adapter, /getBone\('rightToes'\) \|\| getBone\('rightFoot'\)/);
+  assert.match(adapter, /leftPosition\.z > -1/);
+  assert.match(adapter, /leftPosition\.z < 1/);
 });
 
 test('floating avatar rebound allows partial overflow and restores only to the target ratio', () => {
@@ -235,7 +237,7 @@ test('leaving a fullscreen return cat does not end the embedded drag lock', () =
   );
   assert.ok(leaveListener, 'missing the embedded pointerleave listener');
   assert.match(leaveListener[1], /event\.target !== document\.documentElement/);
-  assert.match(leaveListener[1], /event\.relatedTarget !== null/);
+  assert.match(leaveListener[1], /\|\| event\.relatedTarget\) return/);
   assert.ok(
     leaveListener[1].indexOf('event.target') < leaveListener[1].indexOf("relayPointerImmediately(event, 'leave')"),
     'descendant pointerleave events must be ignored before the drag lock is released'

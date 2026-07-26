@@ -817,6 +817,7 @@
             leftFoot.getWorldPosition(leftPosition);
             rightFoot.getWorldPosition(rightPosition);
             leftPosition.add(rightPosition).multiplyScalar(0.5).project(camera);
+            if (!(leftPosition.z > -1) || !(leftPosition.z < 1)) return undefined;
             return viewport.left + (leftPosition.x * 0.5 + 0.5) * viewport.width;
         } catch (_) {
             return undefined;
@@ -1435,7 +1436,7 @@
         // observes it for every descendant. Only release the parent-side drag
         // lock after the pointer leaves the embedded document itself; leaving
         // the return cat (or any other control) must not interrupt a fast drag.
-        if (event.target !== document.documentElement || event.relatedTarget !== null) return;
+        if (event.target !== document.documentElement || event.relatedTarget) return;
         relayPointerImmediately(event, 'leave');
     }, { passive: true, capture: true });
     window.addEventListener('wheel', scheduleRegionReport, { passive: true });
