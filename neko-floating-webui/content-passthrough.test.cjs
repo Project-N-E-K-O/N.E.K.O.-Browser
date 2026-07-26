@@ -124,12 +124,87 @@ test('fullscreen iframe is click-through until an interactive region is selected
   assert.match(source, /data-display-mode="fullscreen"\]\s+#\$\{FRAME_ID\}[\s\S]*?pointer-events: none !important/);
   assert.match(source, /data-embed-interactive="true"[\s\S]*?pointer-events: auto !important/);
   assert.match(source, /findEmbedRegionAtPoint\(point\.x, point\.y\)/);
-  assert.match(source, /setFrameInteractive\(Boolean\(region\), reason\)/);
-  const pointerBlock = functionBlock('handleHostPointerMove', 'updateFrameInteractionFromLastPointer');
+  const interactionBlock = functionBlock(
+    'updateFrameInteractionFromLastPointer',
+    'setFrameInteractive'
+  );
+  assert.match(
+    interactionBlock,
+    /model-bounds[\s\S]*?pointInConservativeEmbedModelBounds[\s\S]*?setFrameInteractive\([\s\S]*?requestEmbedHitTest/
+  );
+  assert.ok(
+    interactionBlock.indexOf('setFrameInteractive(')
+      < interactionBlock.indexOf('requestEmbedHitTest('),
+    'the narrow 3D model region must activate before its asynchronous confirmation'
+  );
+  const conservativeBlock = functionBlock(
+    'pointInConservativeEmbedModelBounds',
+    'updateFrameInteractionFromLastPointer'
+  );
+  assert.match(conservativeBlock, /halfWidth[\s\S]*?\* 0\.5 \* 0\.4/);
+  assert.match(conservativeBlock, /halfHeight[\s\S]*?\* 0\.5 \* 0\.9/);
+  const pointerBlock = functionBlock('handleHostPointerMove', 'scheduleEmbedRegionRefresh');
   assert.ok(
     pointerBlock.indexOf('lastHostPointer =') < pointerBlock.indexOf('!isEmbedPassthroughActive()'),
     'the last host pointer must be remembered before fullscreen starts'
   );
+});
+
+test('3D hit tests are coalesced to one in-flight request', () => {
+  const requestBlock = functionBlock('requestEmbedHitTest', 'scheduleEmbedHitTest');
+  assert.match(requestBlock, /queuedEmbedHitTest =/);
+  assert.doesNotMatch(requestBlock, /postEmbedMessage/);
+
+  const scheduleBlock = functionBlock('scheduleEmbedHitTest', 'cancelEmbedHitTests');
+  assert.match(scheduleBlock, /window\.requestAnimationFrame/);
+  assert.match(scheduleBlock, /pendingEmbedHitTest \|\| !queuedEmbedHitTest/);
+  assert.match(scheduleBlock, /const sent = postEmbedMessage/);
+  assert.match(scheduleBlock, /if \(!sent\)[\s\S]*?setFrameInteractive\(false, 'model-hit-test-unavailable'\)/);
+  assert.ok(
+    scheduleBlock.indexOf('const sent = postEmbedMessage')
+      < scheduleBlock.indexOf('pendingEmbedHitTest ='),
+    'a hit test must only become pending after the bridge accepts it'
+  );
+  assert.match(scheduleBlock, /window\.setTimeout\([\s\S]*?model-hit-test-timeout[\s\S]*?EMBED_HIT_TEST_TIMEOUT_MS/);
+
+  const cancelBlock = functionBlock('cancelEmbedHitTests', 'handleEmbedHitTestResult');
+  assert.match(cancelBlock, /window\.clearTimeout\(embedHitTestTimeout\)/);
+
+  const resultBlock = functionBlock('handleEmbedHitTestResult', 'handleEmbeddedPointer');
+  assert.match(resultBlock, /pendingEmbedHitTest = null/);
+  assert.match(resultBlock, /window\.clearTimeout\(embedHitTestTimeout\)/);
+  assert.match(
+    resultBlock,
+    /Math\.abs\(lastHostPointer\.y - pending\.hostY\) > 1[\s\S]*?requestEmbedHitTest\(point\.x, point\.y, lastHostPointer\)/
+  );
+  assert.ok(
+    resultBlock.indexOf('pendingEmbedHitTest = null')
+      < resultBlock.indexOf('embedPointerLock !== null'),
+    'a matching result must release the in-flight slot even if dragging has started'
+  );
+
+  const postBlock = functionBlock('postEmbedMessage', 'handleEmbedMessage');
+  assert.match(postBlock, /return false/);
+  assert.match(postBlock, /return postFrameBridgeMessage\(payload\)/);
+  assert.match(source, /NEKO_FLOATING_FRAME_ERROR[\s\S]*?resetEmbedPassthrough\('frame-error'\)/);
+});
+
+test('passthrough pointer movement refreshes embedded regions at bounded cadence', () => {
+  const hostPointerBlock = functionBlock('handleHostPointerMove', 'scheduleEmbedRegionRefresh');
+  assert.match(hostPointerBlock, /scheduleEmbedRegionRefresh\(\)/);
+
+  const refreshBlock = functionBlock('scheduleEmbedRegionRefresh', 'updateFrameInteractionFromLastPointer');
+  assert.match(refreshBlock, /EMBED_REGION_REFRESH_MS/);
+  assert.match(refreshBlock, /embedRegionRefreshTimer/);
+  assert.match(refreshBlock, /window\.setTimeout/);
+  assert.match(refreshBlock, /NEKO_EMBED_GET_REGIONS/);
+
+  const resetBlock = functionBlock('resetEmbedPassthrough', 'startEmbeddedSurfaceHandshake');
+  assert.match(
+    resetBlock,
+    /embedRegionRefreshTimer[\s\S]*?window\.clearTimeout\(embedRegionRefreshTimer\)[\s\S]*?embedRegionRefreshTimer = 0/
+  );
+  assert.match(resetBlock, /lastEmbedRegionRefreshAt = 0/);
 });
 
 test('fullscreen uses the embedded avatar without a separate extension wake button', () => {
@@ -185,6 +260,11 @@ test('switching between floating and fullscreen reflows the live WebUI without r
   assert.match(block, /requestAnimationFrame/);
   assert.match(block, /scheduleWebuiReflow\(\)/);
   assert.doesNotMatch(block, /reloadFrameBridge|NEKO_FLOATING_FRAME_RELOAD/);
+
+  const reflowBlock = functionBlock('scheduleWebuiReflow', 'checkHealth');
+  assert.match(reflowBlock, /\[0, 240, 1200\]/);
+  assert.match(reflowBlock, /force: true/);
+  assert.doesNotMatch(reflowBlock, /force: delay === 0/);
 });
 
 test('expanded floating panels cannot cross the left or top viewport edge', () => {
@@ -292,6 +372,10 @@ test('embedded iframe inherits the page color scheme to preserve dark-page trans
 
 test('embedded pointer relay locks interaction for the full drag lifetime', () => {
   const block = functionBlock('handleEmbeddedPointer', 'createHost');
+  assert.ok(
+    block.indexOf('cancelEmbedHitTests()') < block.indexOf("phase === 'down'"),
+    'every newer embedded pointer result must retire stale model hit tests'
+  );
   assert.match(block, /phase === 'down'[\s\S]*?embedPointerLock = pointerId/);
   assert.match(block, /phase === 'up' \|\| phase === 'cancel' \|\| phase === 'leave'/);
   assert.match(block, /embedPointerLock = null/);

@@ -24,6 +24,8 @@
     const FLOATING_AVATAR_VERTICAL_TARGET_RATIO = 0.75;
     const FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO = 0.06;
     const FLOATING_AVATAR_CORE_TARGET_INSET_RATIO = 0.12;
+    const POINTER_REGION_REFRESH_MS = 200;
+    const CURSOR_BOUNDS_REFRESH_MS = 200;
     const COMPONENT_ORDER = Object.freeze(['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']);
     const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
     const UI_REGION_SELECTORS = Object.freeze({
@@ -98,6 +100,10 @@
     let managerSyncTicks = 0;
     let pointerRelayFrame = 0;
     let pendingPointerRelay = null;
+    let pointerRegionRefreshTimer = 0;
+    let lastPointerRegionRefreshAt = 0;
+    let cachedElementRegions = null;
+    let cachedAvatarBoundsRegion = null;
     let responsiveViewportFrame = 0;
     let lastMobileViewport = isMobileViewport();
     let requestedAvatarForm = initialAvatarForm;
@@ -109,6 +115,10 @@
     const managersPausedBySurface = new WeakSet();
     const live2dSnapManagers = new WeakSet();
     const threeSnapInteractions = new WeakSet();
+    const optimizedCursorFollowers = new WeakSet();
+    const cursorBoundsStates = new WeakMap();
+    const stabilizedModelDragHandlers = new WeakMap();
+    const modelPanDragStates = new WeakMap();
 
     if (requestedAvatarForm === 'cat') {
         document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
@@ -586,6 +596,10 @@
     function syncAvatarRendering() {
         installFloatingAvatarSnapAdapters();
         const avatarEnabled = enabledComponents.has('avatar');
+        optimizeCursorFollow(window.vrmManager, window.vrmManager?._cursorFollow, 'updateTarget');
+        optimizeCursorFollow(window.mmdManager, window.mmdManager?.cursorFollow, 'update');
+        stabilizeModelPanDrag(window.vrmManager);
+        stabilizeModelPanDrag(window.mmdManager);
         [
             window.live2dManager,
             window.vrmManager,
@@ -896,6 +910,270 @@
         return 0;
     }
 
+    function normalizeThreeScreenBounds(bounds) {
+        if (!bounds || typeof bounds !== 'object') return null;
+        const left = Number(bounds.left ?? bounds.minX);
+        const right = Number(bounds.right ?? bounds.maxX);
+        const top = Number(bounds.top ?? bounds.minY);
+        const bottom = Number(bounds.bottom ?? bounds.maxY);
+        if (![left, right, top, bottom].every(Number.isFinite)
+            || right <= left || bottom <= top) {
+            return null;
+        }
+        return {
+            left,
+            right,
+            top,
+            bottom,
+            width: right - left,
+            height: bottom - top,
+            centerX: (left + right) / 2,
+            centerY: (top + bottom) / 2
+        };
+    }
+
+    function readCursorFollowBounds(manager) {
+        const model = manager && manager.currentModel;
+        if (!manager || !model) return null;
+
+        const now = performance.now();
+        const interaction = manager.interaction;
+        const interactionSource = interaction?._cachedScreenBounds || null;
+        const interactionRevision = Number(
+            interaction?._lastModelUpdateTime ?? interaction?._lastBoundsUpdateTime
+        ) || 0;
+        let state = cursorBoundsStates.get(manager);
+
+        if (!state || state.model !== model) {
+            const freshBounds = typeof manager.getModelScreenBounds === 'function'
+                ? normalizeThreeScreenBounds(manager.getModelScreenBounds())
+                : null;
+            state = {
+                model,
+                bounds: freshBounds,
+                updatedAt: now,
+                interactionSource,
+                interactionRevision
+            };
+            cursorBoundsStates.set(manager, state);
+            return freshBounds;
+        }
+
+        if (interactionSource
+            && (interactionSource !== state.interactionSource
+                || interactionRevision !== state.interactionRevision)) {
+            const interactionBounds = normalizeThreeScreenBounds(interactionSource);
+            if (interactionBounds) {
+                state.bounds = interactionBounds;
+                state.updatedAt = now;
+            }
+            state.interactionSource = interactionSource;
+            state.interactionRevision = interactionRevision;
+            return state.bounds;
+        }
+
+        if (now - state.updatedAt < CURSOR_BOUNDS_REFRESH_MS) {
+            return state.bounds;
+        }
+
+        state.bounds = typeof manager.getModelScreenBounds === 'function'
+            ? normalizeThreeScreenBounds(manager.getModelScreenBounds())
+            : null;
+        state.updatedAt = now;
+        state.interactionSource = interactionSource;
+        state.interactionRevision = interactionRevision;
+        return state.bounds;
+    }
+
+    function optimizeCursorFollow(manager, cursorFollow, methodName) {
+        if (!manager || !cursorFollow || optimizedCursorFollowers.has(cursorFollow)) return;
+        const original = cursorFollow[methodName];
+        if (typeof original !== 'function') return;
+
+        const managerFacade = Object.create(manager);
+        Object.defineProperty(managerFacade, 'getModelScreenBounds', {
+            configurable: false,
+            enumerable: false,
+            value: () => readCursorFollowBounds(manager)
+        });
+
+        cursorFollow[methodName] = function (...args) {
+            const realManager = this.manager;
+            if (realManager !== manager) {
+                return original.apply(this, args);
+            }
+            this.manager = managerFacade;
+            try {
+                return original.apply(this, args);
+            } finally {
+                this.manager = realManager;
+            }
+        };
+        optimizedCursorFollowers.add(cursorFollow);
+    }
+
+    function getThreeModelRoot(manager) {
+        return manager?.currentModel?.scene || manager?.currentModel?.mesh || null;
+    }
+
+    function createStablePanDragState(manager, interaction) {
+        const THREE = window.THREE;
+        const modelRoot = getThreeModelRoot(manager);
+        const camera = manager?.camera;
+        const canvas = manager?.renderer?.domElement;
+        const pointer = interaction?.previousMousePosition;
+        if (!THREE || !modelRoot?.position || !camera || !canvas
+            || !Number.isFinite(Number(pointer?.x))
+            || !Number.isFinite(Number(pointer?.y))) {
+            return null;
+        }
+
+        const width = Number(canvas.clientWidth);
+        const height = Number(canvas.clientHeight);
+        if (!(width > 0) || !(height > 0)) return null;
+
+        camera.updateMatrixWorld?.(true);
+        modelRoot.updateMatrixWorld?.(true);
+        let worldPosition;
+        try {
+            worldPosition = new THREE.Box3().setFromObject(modelRoot).getCenter(new THREE.Vector3());
+        } catch (_) {
+            worldPosition = typeof modelRoot.getWorldPosition === 'function'
+                ? modelRoot.getWorldPosition(new THREE.Vector3())
+                : modelRoot.position.clone();
+        }
+        const cameraSpacePosition = worldPosition.clone().applyMatrix4(camera.matrixWorldInverse);
+        const depth = Math.abs(Number(cameraSpacePosition.z));
+        if (!(depth > 0)) return null;
+
+        const effectiveFov = typeof camera.getEffectiveFOV === 'function'
+            ? Number(camera.getEffectiveFOV())
+            : Number(camera.fov) / (Number(camera.zoom) || 1);
+        if (!(effectiveFov > 0)) return null;
+
+        const worldHeight = 2 * Math.tan(effectiveFov * Math.PI / 360) * depth;
+        const aspect = Number(camera.aspect) > 0 ? Number(camera.aspect) : width / height;
+        const cameraQuaternion = typeof camera.getWorldQuaternion === 'function'
+            ? camera.getWorldQuaternion(new THREE.Quaternion())
+            : camera.quaternion;
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cameraQuaternion).normalize();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cameraQuaternion).normalize();
+        if (modelRoot.parent && typeof modelRoot.parent.getWorldQuaternion === 'function') {
+            const parentWorldInverse = modelRoot.parent
+                .getWorldQuaternion(new THREE.Quaternion())
+                .invert();
+            right.applyQuaternion(parentWorldInverse);
+            up.applyQuaternion(parentWorldInverse);
+        }
+
+        return {
+            modelRoot,
+            pointerX: Number(pointer.x),
+            pointerY: Number(pointer.y),
+            startPosition: modelRoot.position.clone(),
+            right,
+            up,
+            pixelToWorldX: (worldHeight * aspect) / width,
+            pixelToWorldY: worldHeight / height,
+            nextPosition: modelRoot.position.clone()
+        };
+    }
+
+    function applyStablePanDragPosition(state, interaction, event) {
+        const eventX = Number(event.clientX);
+        const eventY = Number(event.clientY);
+        const deltaX = eventX - state.pointerX;
+        const deltaY = eventY - state.pointerY;
+        state.nextPosition
+            .copy(state.startPosition)
+            .addScaledVector(state.right, deltaX * state.pixelToWorldX)
+            .addScaledVector(state.up, -deltaY * state.pixelToWorldY);
+
+        const intendedX = state.nextPosition.x;
+        const intendedY = state.nextPosition.y;
+        const intendedZ = state.nextPosition.z;
+        const nextPosition = typeof interaction.clampModelPosition === 'function'
+            ? interaction.clampModelPosition(state.nextPosition)
+            : state.nextPosition;
+        state.modelRoot.position.copy(nextPosition);
+
+        const wasClamped = Math.abs(nextPosition.x - intendedX) > 1e-7
+            || Math.abs(nextPosition.y - intendedY) > 1e-7
+            || Math.abs(nextPosition.z - intendedZ) > 1e-7;
+        if (wasClamped) {
+            // Discard pointer overshoot at the boundary. Otherwise total
+            // displacement keeps growing behind the clamp and the model stays
+            // pinned while the pointer reverses direction.
+            state.startPosition.copy(nextPosition);
+            state.pointerX = eventX;
+            state.pointerY = eventY;
+        }
+    }
+
+    function runStablePanHostHandler(manager, interaction, original, event) {
+        if (manager === window.vrmManager && manager._isModelReadyForInteraction === false) {
+            original(event);
+            return false;
+        }
+        interaction.dragMode = 'neko-stable-pan';
+        try {
+            original(event);
+        } finally {
+            if (interaction.isDragging && interaction.dragMode === 'neko-stable-pan') {
+                interaction.dragMode = 'pan';
+            }
+        }
+        if (!interaction.isDragging || interaction.dragMode !== 'pan') return false;
+
+        interaction._rememberPanDragPointer?.(event);
+        interaction._rememberDragHintPanPointer?.(event);
+        if (typeof interaction._recordDragHintPointerEdgeApproach === 'function') {
+            const modelType = manager === window.vrmManager ? 'vrm' : 'mmd';
+            void interaction._recordDragHintPointerEdgeApproach(modelType);
+        }
+        return true;
+    }
+
+    function stabilizeModelPanDrag(manager) {
+        const interaction = manager?.interaction;
+        const original = interaction?.dragHandler;
+        if (!interaction || typeof original !== 'function') return;
+        if (stabilizedModelDragHandlers.get(interaction) === original) return;
+
+        document.removeEventListener('mousemove', original);
+        const wrapped = (event) => {
+            if (!interaction.isDragging || interaction.dragMode !== 'pan') {
+                modelPanDragStates.delete(interaction);
+                return original(event);
+            }
+
+            let state = modelPanDragStates.get(interaction);
+            const modelRoot = getThreeModelRoot(manager);
+            if (!state || state.modelRoot !== modelRoot) {
+                state = createStablePanDragState(manager, interaction);
+                if (state) modelPanDragStates.set(interaction, state);
+            }
+            if (!state) return original(event);
+
+            // Preserve all host-side lock, hint and bookkeeping behavior while
+            // neutralizing its incremental distance-based translation.
+            interaction.previousMousePosition = {
+                x: Number(event.clientX),
+                y: Number(event.clientY)
+            };
+            if (!runStablePanHostHandler(manager, interaction, original, event)) {
+                modelPanDragStates.delete(interaction);
+                return;
+            }
+
+            applyStablePanDragPosition(state, interaction, event);
+        };
+
+        interaction.dragHandler = wrapped;
+        document.addEventListener('mousemove', wrapped);
+        stabilizedModelDragHandlers.set(interaction, wrapped);
+    }
+
     function capitalize(value) {
         return value.charAt(0).toUpperCase() + value.slice(1);
     }
@@ -1031,11 +1309,18 @@
     }
 
     function getThreeBoundsRegion(manager, id) {
-        if (!manager || typeof manager.getModelScreenBounds !== 'function') return null;
+        if (!manager) return null;
         const canvas = manager.renderer && manager.renderer.domElement;
         if (!canvas || !isRendered(canvas)) return null;
         try {
-            const bounds = manager.getModelScreenBounds();
+            // The host interaction layer already maintains this at its own
+            // throttled cadence. Reading it keeps region reporting cheap and
+            // leaves the manager's public geometry method untouched.
+            const cachedBounds = normalizeThreeScreenBounds(manager.interaction?._cachedScreenBounds);
+            const bounds = cachedBounds
+                || (typeof manager.getModelScreenBounds === 'function'
+                    ? normalizeThreeScreenBounds(manager.getModelScreenBounds())
+                    : null);
             if (!bounds) return null;
             const rect = rectToPayload(bounds);
             return rect ? { component: 'avatar', kind: 'model-bounds', id, rect } : null;
@@ -1056,6 +1341,8 @@
         const regions = collectElementRegions();
         const avatarRegion = collectAvatarBoundsRegion();
         if (avatarRegion) regions.push(avatarRegion);
+        cachedElementRegions = regions.filter((region) => region !== avatarRegion);
+        cachedAvatarBoundsRegion = avatarRegion;
         return regions;
     }
 
@@ -1065,6 +1352,22 @@
             regionFrame = 0;
             reportRegions();
         });
+    }
+
+    function schedulePointerRegionRefresh() {
+        const now = performance.now();
+        const elapsed = now - lastPointerRegionRefreshAt;
+        if (elapsed >= POINTER_REGION_REFRESH_MS) {
+            lastPointerRegionRefreshAt = now;
+            scheduleRegionReport();
+            return;
+        }
+        if (pointerRegionRefreshTimer) return;
+        pointerRegionRefreshTimer = window.setTimeout(() => {
+            pointerRegionRefreshTimer = 0;
+            lastPointerRegionRefreshAt = performance.now();
+            scheduleRegionReport();
+        }, Math.max(0, POINTER_REGION_REFRESH_MS - elapsed));
     }
 
     function reportRegions(force) {
@@ -1088,8 +1391,21 @@
         return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     }
 
+    function pointInAvatarConservativeBounds(x, y, bounds) {
+        const centerX = (bounds.left + bounds.right) / 2;
+        const centerY = (bounds.top + bounds.bottom) / 2;
+        // Keep only the model-centered portion of the broad Three.js Box3.
+        // The 40% x 90% inset matches the narrow visible-avatar interaction
+        // zone while leaving the surrounding host page click-through.
+        const halfWidth = (bounds.right - bounds.left) * 0.5 * 0.4;
+        const halfHeight = (bounds.bottom - bounds.top) * 0.5 * 0.9;
+        if (!(halfWidth > 0) || !(halfHeight > 0)) return false;
+        return Math.abs(x - centerX) <= halfWidth
+            && Math.abs(y - centerY) <= halfHeight;
+    }
+
     function hitTestUi(x, y) {
-        const regions = collectElementRegions();
+        const regions = cachedElementRegions || collectElementRegions();
         for (let index = regions.length - 1; index >= 0; index -= 1) {
             const region = regions[index];
             if (pointInRect(x, y, region.rect)) return region;
@@ -1146,15 +1462,21 @@
     }
 
     function hitTestThreeManager(manager, x, y) {
-        const interaction = manager && manager.interaction;
-        if (!interaction || typeof interaction._hitTestModel !== 'function') return false;
+        if (!manager) return false;
         const canvas = manager.renderer && manager.renderer.domElement;
         if (!canvas || !isRendered(canvas)) return false;
-        try {
-            return interaction._hitTestModel(x, y) === true;
-        } catch (_) {
-            return false;
-        }
+
+        // Never raycast the animated hierarchy during hover. Prefer the
+        // adapter's bounded-cadence region report because it is refreshed
+        // without replacing host manager methods; use the host interaction
+        // cache only before the first report is available.
+        const expectedId = manager === window.vrmManager ? 'vrm-model' : 'mmd-model';
+        const reportedBounds = cachedAvatarBoundsRegion?.id === expectedId
+            ? normalizeThreeScreenBounds(cachedAvatarBoundsRegion.rect)
+            : null;
+        const interactionBounds = normalizeThreeScreenBounds(manager.interaction?._cachedScreenBounds);
+        const bounds = interactionBounds || reportedBounds;
+        return bounds ? pointInAvatarConservativeBounds(x, y, bounds) : false;
     }
 
     function hitTestPngtuber(x, y) {
@@ -1227,7 +1549,12 @@
         // which are intentionally broader than configured Cubism hit areas.
         // Match that contract so limbs remain draggable while the rest of the
         // full-screen iframe can still pass through to the host page.
-        const live2dRegion = getLive2DBoundsRegion();
+        let live2dRegion = cachedAvatarBoundsRegion?.id === 'live2d-model'
+            ? cachedAvatarBoundsRegion
+            : null;
+        if (!live2dRegion) {
+            live2dRegion = getLive2DBoundsRegion();
+        }
         if (live2dRegion && pointInRect(x, y, live2dRegion.rect)) {
             return {
                 interactive: true,
@@ -1257,6 +1584,53 @@
             pendingPointerRelay = null;
         }
         publishPointerRelay(snapshotPointerEvent(event, phase));
+    }
+
+    function finishActiveThreeModelDrags(event, force) {
+        if (!force && Number(event?.buttons) !== 0) return;
+        const vrmManager = window.vrmManager;
+        const mmdManager = window.mmdManager;
+        const vrmInteraction = vrmManager?.interaction;
+        const mmdInteraction = mmdManager?.interaction;
+        const vrmActive = vrmInteraction?.isDragging
+            && typeof vrmInteraction.mouseUpHandler === 'function';
+        const mmdActive = mmdInteraction?.isDragging
+            && typeof mmdInteraction.mouseUpHandler === 'function';
+        if (!vrmActive && !mmdActive) return;
+
+        const releaseEvent = {
+            clientX: Number(event?.clientX) || 0,
+            clientY: Number(event?.clientY) || 0,
+            screenX: Number(event?.screenX) || 0,
+            screenY: Number(event?.screenY) || 0,
+            button: 0,
+            buttons: 0,
+            preventDefault() {},
+            stopPropagation() {}
+        };
+
+        const finishManagerDrag = (manager, interaction) => {
+            cursorBoundsStates.delete(manager);
+            modelPanDragStates.delete(interaction);
+            try {
+                Promise.resolve(interaction.mouseUpHandler(releaseEvent))
+                    .catch(() => {})
+                    .finally(scheduleRegionReport);
+            } catch (_) {
+                interaction.isDragging = false;
+                interaction.dragMode = null;
+                interaction._restoreButtonPointerEvents?.();
+                scheduleRegionReport();
+            }
+        };
+        if (vrmActive) finishManagerDrag(vrmManager, vrmInteraction);
+        if (mmdActive) finishManagerDrag(mmdManager, mmdInteraction);
+    }
+
+    function clearThreeModelPanDragStates() {
+        [window.vrmManager, window.mmdManager].forEach((manager) => {
+            if (manager?.interaction) modelPanDragStates.delete(manager.interaction);
+        });
     }
 
     function postToParent(type, payload) {
@@ -1419,25 +1793,31 @@
     });
     window.addEventListener('scroll', scheduleRegionReport, true);
     window.addEventListener('pointermove', (event) => {
-        scheduleRegionReport();
+        // If the button was released outside the window, end the stale model
+        // drag before its document-level mousemove handler sees the re-entry.
+        finishActiveThreeModelDrags(event, false);
         relayPointerMove(event);
+        schedulePointerRegionRefresh();
     }, { passive: true, capture: true });
     window.addEventListener('pointerdown', (event) => {
+        clearThreeModelPanDragStates();
         relayPointerImmediately(event, 'down');
     }, { passive: true, capture: true });
     window.addEventListener('pointerup', (event) => {
         relayPointerImmediately(event, 'up');
+        scheduleRegionReport();
     }, { passive: true, capture: true });
     window.addEventListener('pointercancel', (event) => {
         relayPointerImmediately(event, 'cancel');
+        scheduleRegionReport();
     }, { passive: true, capture: true });
-    document.addEventListener('pointerleave', (event) => {
-        // pointerleave does not bubble, but a capture listener on document still
-        // observes it for every descendant. Only release the parent-side drag
-        // lock after the pointer leaves the embedded document itself; leaving
-        // the return cat (or any other control) must not interrupt a fast drag.
-        if (event.target !== document.documentElement || event.relatedTarget) return;
+    window.addEventListener('pointerout', (event) => {
+        // A descendant pointerout still reaches window. Keep the parent-side
+        // drag lock until the pointer actually leaves the embedded document.
+        if (event.relatedTarget) return;
+        finishActiveThreeModelDrags(event, true);
         relayPointerImmediately(event, 'leave');
+        scheduleRegionReport();
     }, { passive: true, capture: true });
     window.addEventListener('wheel', scheduleRegionReport, { passive: true });
     window.addEventListener('chat-surface-mode-change', (event) => {
