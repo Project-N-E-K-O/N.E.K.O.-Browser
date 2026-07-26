@@ -1306,10 +1306,26 @@
     if (!panel) {
       return;
     }
+    const expandingFloatingPanel = minimized === false
+      && displayMode === 'floating'
+      && panel.dataset.minimized === 'true';
+    let expandedPanelAdjusted = false;
+    if (expandingFloatingPanel) {
+      const expandedPanel = normalizePanel(currentPanel);
+      expandedPanelAdjusted = expandedPanel.right !== currentPanel.right
+        || expandedPanel.bottom !== currentPanel.bottom
+        || expandedPanel.width !== currentPanel.width
+        || expandedPanel.height !== currentPanel.height;
+      currentPanel = expandedPanel;
+    }
     if (minimized) {
       setAvatarForm('cat', false);
     }
     panel.dataset.minimized = String(minimized);
+
+    if (expandingFloatingPanel) {
+      applyPanelStyles(panel, currentPanel);
+    }
 
     if (minimized) {
       setRoutesOpen(false);
@@ -1320,12 +1336,14 @@
     }
 
     if (persist) {
-      saveState({ enabled: true, minimized, avatarForm });
+      saveState({ enabled: true, minimized, avatarForm, panel: currentPanel });
       chrome.runtime.sendMessage({
         type: 'NEKO_PANEL_STATE',
         minimized,
         avatarForm
       }).catch(() => {});
+    } else if (expandedPanelAdjusted) {
+      saveState({ panel: currentPanel });
     }
   }
 
@@ -1731,6 +1749,7 @@
     postEmbedMessage({
       type: 'NEKO_EMBED_CONNECT',
       protocolVersion: EMBED_PROTOCOL_VERSION,
+      displayMode,
       components: surfaceComponents.slice(),
       chatMode: chatSurfaceMode,
       avatarForm,

@@ -17,6 +17,13 @@
 
     const PROTOCOL_VERSION = 1;
     const MOBILE_VIEWPORT_MAX_WIDTH = 768;
+    const EMBED_DISPLAY_MODES = Object.freeze(['floating', 'fullscreen']);
+    const FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO = 0.75;
+    const FLOATING_AVATAR_HORIZONTAL_TARGET_RATIO = 0.82;
+    const FLOATING_AVATAR_VERTICAL_TRIGGER_RATIO = 0.65;
+    const FLOATING_AVATAR_VERTICAL_TARGET_RATIO = 0.75;
+    const FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO = 0.06;
+    const FLOATING_AVATAR_CORE_TARGET_INSET_RATIO = 0.12;
     const COMPONENT_ORDER = Object.freeze(['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status']);
     const CHAT_SURFACE_MODES = Object.freeze(['auto', 'compact', 'full']);
     const UI_REGION_SELECTORS = Object.freeze({
@@ -81,6 +88,7 @@
 
     let enabledComponents = new Set(normalizeComponents(initialComponents));
     let fixedChatMode = normalizeChatMode(initialChatMode);
+    let embeddedDisplayMode = null;
     let pageChatMode = null;
     let connectedParentOrigin = null;
     let regionFrame = 0;
@@ -99,6 +107,8 @@
     let avatarModelReturnDispatchedAt = 0;
     let lastAvatarFormReport = '';
     const managersPausedBySurface = new WeakSet();
+    const live2dSnapManagers = new WeakSet();
+    const threeSnapInteractions = new WeakSet();
 
     if (requestedAvatarForm === 'cat') {
         document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
@@ -126,6 +136,20 @@
     function normalizeChatMode(value) {
         const normalized = String(value || '').trim().toLowerCase();
         return CHAT_SURFACE_MODES.includes(normalized) ? normalized : 'auto';
+    }
+
+    function normalizeDisplayMode(value) {
+        const normalized = String(value || '').trim().toLowerCase();
+        return EMBED_DISPLAY_MODES.includes(normalized) ? normalized : null;
+    }
+
+    function setEmbeddedDisplayMode(value) {
+        const nextMode = normalizeDisplayMode(value);
+        if (!nextMode) return embeddedDisplayMode;
+        embeddedDisplayMode = nextMode;
+        document.documentElement.dataset.nekoEmbeddedDisplayMode = nextMode;
+        installFloatingAvatarSnapAdapters();
+        return embeddedDisplayMode;
     }
 
     function normalizeAvatarForm(value) {
@@ -560,6 +584,7 @@
     }
 
     function syncAvatarRendering() {
+        installFloatingAvatarSnapAdapters();
         const avatarEnabled = enabledComponents.has('avatar');
         [
             window.live2dManager,
@@ -582,6 +607,292 @@
                 } catch (_) {}
             }
         });
+    }
+
+    function installFloatingAvatarSnapAdapters() {
+        installLive2DSnapAdapter(window.live2dManager);
+        installThreeModelSnapAdapter(window.vrmManager);
+        installThreeModelSnapAdapter(window.mmdManager);
+    }
+
+    function installLive2DSnapAdapter(manager) {
+        if (!manager || live2dSnapManagers.has(manager)) return false;
+        if (typeof manager._checkSnapRequired !== 'function') return false;
+
+        const checkSnapRequired = manager._checkSnapRequired;
+        manager._checkSnapRequired = async function (model, options = {}) {
+            const useFloatingPolicy = embeddedDisplayMode === 'floating'
+                && options.afterDisplaySwitch !== true
+                && options.threshold === undefined;
+            if (!useFloatingPolicy) return checkSnapRequired.call(this, model, options);
+
+            const result = getFloatingLive2DSnap(this, model);
+            return result === undefined ? checkSnapRequired.call(this, model, options) : result;
+        };
+        live2dSnapManagers.add(manager);
+        return true;
+    }
+
+    function getFloatingLive2DSnap(manager, model) {
+        if (!model || typeof model.getBounds !== 'function') return undefined;
+        try {
+            const bounds = model.getBounds();
+            const rendererScreen = manager.pixi_app && manager.pixi_app.renderer
+                ? manager.pixi_app.renderer.screen
+                : null;
+            const rendererWidth = Number(rendererScreen && rendererScreen.width);
+            const rendererHeight = Number(rendererScreen && rendererScreen.height);
+            const viewportWidth = Number(window.innerWidth);
+            const viewportHeight = Number(window.innerHeight);
+            const screenRight = Number.isFinite(rendererWidth) && rendererWidth > 0
+                ? Math.min(rendererWidth, viewportWidth)
+                : viewportWidth;
+            const screenBottom = Number.isFinite(rendererHeight) && rendererHeight > 0
+                ? Math.min(rendererHeight, viewportHeight)
+                : viewportHeight;
+            const boundsCorrectionX = getFloatingAxisCorrection(
+                bounds.left,
+                bounds.right,
+                0,
+                screenRight,
+                FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO,
+                FLOATING_AVATAR_HORIZONTAL_TARGET_RATIO
+            );
+            const coreX = getLive2DHorizontalCore(manager, bounds);
+            const coreCorrectionX = getFloatingCoreCorrection(coreX, 0, screenRight);
+            const correctionX = combineHorizontalCorrections(boundsCorrectionX, coreCorrectionX);
+            const correctionY = getFloatingAxisCorrection(
+                bounds.top,
+                bounds.bottom,
+                0,
+                screenBottom,
+                FLOATING_AVATAR_VERTICAL_TRIGGER_RATIO,
+                FLOATING_AVATAR_VERTICAL_TARGET_RATIO
+            );
+            if (correctionX === undefined || correctionY === undefined) return undefined;
+            if (correctionX === 0 && correctionY === 0) return null;
+
+            return {
+                startX: model.x,
+                startY: model.y,
+                targetX: model.x + correctionX,
+                targetY: model.y + correctionY,
+                overflow: {
+                    left: Math.max(0, -Number(bounds.left)),
+                    right: Math.max(0, Number(bounds.right) - screenRight),
+                    top: Math.max(0, -Number(bounds.top)),
+                    bottom: Math.max(0, Number(bounds.bottom) - screenBottom)
+                }
+            };
+        } catch (_) {
+            return undefined;
+        }
+    }
+
+    function installThreeModelSnapAdapter(manager) {
+        const interaction = manager && manager.interaction;
+        if (!interaction || threeSnapInteractions.has(interaction)) return false;
+        if (typeof interaction.clampModelPosition !== 'function') return false;
+
+        const clampModelPosition = interaction.clampModelPosition;
+        interaction.clampModelPosition = function (position, options) {
+            const hasCustomThreshold = options
+                && Object.prototype.hasOwnProperty.call(options, 'minVisiblePixels');
+            if (embeddedDisplayMode === 'floating' && !hasCustomThreshold) {
+                const target = getFloatingThreeModelTarget(this.manager || manager, position);
+                if (target) return target;
+            }
+            return clampModelPosition.apply(this, arguments);
+        };
+        threeSnapInteractions.add(interaction);
+        return true;
+    }
+
+    function getFloatingThreeModelTarget(manager, position) {
+        if (!manager || !position || typeof position.clone !== 'function') return null;
+        if (typeof manager.getModelScreenBounds !== 'function') return null;
+
+        const camera = manager.camera;
+        const renderer = manager.renderer;
+        const Three = window.THREE;
+        if (!camera || !renderer || !Three || typeof Three.Vector3 !== 'function') return null;
+
+        try {
+            const bounds = manager.getModelScreenBounds();
+            const viewport = renderer.domElement && renderer.domElement.getBoundingClientRect();
+            if (!bounds || !viewport || !(viewport.width > 0) || !(viewport.height > 0)) return null;
+
+            const boundsCorrectionX = getFloatingAxisCorrection(
+                bounds.left,
+                bounds.right,
+                viewport.left,
+                viewport.right,
+                FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO,
+                FLOATING_AVATAR_HORIZONTAL_TARGET_RATIO
+            );
+            const coreX = getThreeHorizontalCore(manager, bounds, viewport);
+            const coreCorrectionX = getFloatingCoreCorrection(coreX, viewport.left, viewport.right);
+            const correctionX = combineHorizontalCorrections(boundsCorrectionX, coreCorrectionX);
+            const correctionY = getFloatingAxisCorrection(
+                bounds.top,
+                bounds.bottom,
+                viewport.top,
+                viewport.bottom,
+                FLOATING_AVATAR_VERTICAL_TRIGGER_RATIO,
+                FLOATING_AVATAR_VERTICAL_TARGET_RATIO
+            );
+            if (correctionX === undefined || correctionY === undefined) return null;
+            if (correctionX === 0 && correctionY === 0) return position;
+
+            const cameraDistance = camera.position.distanceTo(position);
+            const fov = Number(camera.fov) * (Math.PI / 180);
+            if (!(cameraDistance > 0) || !(fov > 0)) return null;
+            const worldHeight = 2 * Math.tan(fov / 2) * cameraDistance;
+            const worldWidth = worldHeight * (viewport.width / viewport.height);
+            const rightVector = new Three.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            const upVector = new Three.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+            const target = position.clone();
+            target.add(rightVector.multiplyScalar(correctionX * worldWidth / viewport.width));
+            target.add(upVector.multiplyScalar(-correctionY * worldHeight / viewport.height));
+            return target;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function getLive2DHorizontalCore(manager, bounds) {
+        try {
+            if (manager && typeof manager.getBodyScreenRectInfo === 'function') {
+                const bodyRect = manager.getBodyScreenRectInfo()?.rect;
+                if (bodyRect) {
+                    const bodyCenterX = Number.isFinite(bodyRect.centerX)
+                        ? bodyRect.centerX
+                        : (Number(bodyRect.left) + Number(bodyRect.right)) / 2;
+                    if (Number.isFinite(bodyCenterX)) return bodyCenterX;
+                }
+            }
+        } catch (_) {}
+        const left = Number(bounds && bounds.left);
+        const right = Number(bounds && bounds.right);
+        return Number.isFinite(left) && Number.isFinite(right) ? (left + right) / 2 : undefined;
+    }
+
+    function getThreeHorizontalCore(manager, bounds, viewport) {
+        const footCenterX = getVrmFootCenterX(manager, viewport);
+        if (Number.isFinite(footCenterX)) return footCenterX;
+        if (!bounds) return undefined;
+        const centerX = Number.isFinite(bounds.centerX)
+            ? bounds.centerX
+            : (Number(bounds.left) + Number(bounds.right)) / 2;
+        return Number.isFinite(centerX) ? centerX : undefined;
+    }
+
+    function getVrmFootCenterX(manager, viewport) {
+        const vrm = manager && manager.currentModel && (
+            manager.currentModel.vrm || manager.currentModel
+        );
+        const humanoid = vrm && vrm.humanoid;
+        const Three = window.THREE;
+        const camera = manager && manager.camera;
+        if (!humanoid || !Three || !camera || !viewport) return undefined;
+
+        const getBone = (name) => {
+            try {
+                return (typeof humanoid.getNormalizedBoneNode === 'function'
+                    ? humanoid.getNormalizedBoneNode(name)
+                    : null) || (typeof humanoid.getRawBoneNode === 'function'
+                    ? humanoid.getRawBoneNode(name)
+                    : null);
+            } catch (_) {
+                return null;
+            }
+        };
+        const leftFoot = getBone('leftToes') || getBone('leftFoot');
+        const rightFoot = getBone('rightToes') || getBone('rightFoot');
+        if (!leftFoot || !rightFoot) return undefined;
+
+        try {
+            const leftPosition = new Three.Vector3();
+            const rightPosition = new Three.Vector3();
+            leftFoot.getWorldPosition(leftPosition);
+            rightFoot.getWorldPosition(rightPosition);
+            leftPosition.add(rightPosition).multiplyScalar(0.5).project(camera);
+            return viewport.left + (leftPosition.x * 0.5 + 0.5) * viewport.width;
+        } catch (_) {
+            return undefined;
+        }
+    }
+
+    function getFloatingCoreCorrection(corePosition, viewportStart, viewportEnd) {
+        corePosition = Number(corePosition);
+        viewportStart = Number(viewportStart);
+        viewportEnd = Number(viewportEnd);
+        if (![corePosition, viewportStart, viewportEnd].every(Number.isFinite)) return undefined;
+        const viewportSize = viewportEnd - viewportStart;
+        if (!(viewportSize > 0)) return undefined;
+
+        const triggerInset = viewportSize * FLOATING_AVATAR_CORE_TRIGGER_INSET_RATIO;
+        const targetInset = viewportSize * FLOATING_AVATAR_CORE_TARGET_INSET_RATIO;
+        if (corePosition < viewportStart + triggerInset) {
+            return viewportStart + targetInset - corePosition;
+        }
+        if (corePosition > viewportEnd - triggerInset) {
+            return viewportEnd - targetInset - corePosition;
+        }
+        return 0;
+    }
+
+    function combineHorizontalCorrections(boundsCorrection, coreCorrection) {
+        if (!Number.isFinite(boundsCorrection)) return coreCorrection;
+        if (!Number.isFinite(coreCorrection) || coreCorrection === 0) return boundsCorrection;
+        if (boundsCorrection === 0) return coreCorrection;
+        if (boundsCorrection > 0 && coreCorrection > 0) {
+            return Math.max(boundsCorrection, coreCorrection);
+        }
+        if (boundsCorrection < 0 && coreCorrection < 0) {
+            return Math.min(boundsCorrection, coreCorrection);
+        }
+        return coreCorrection;
+    }
+
+    function getFloatingAxisCorrection(
+        modelStart,
+        modelEnd,
+        viewportStart,
+        viewportEnd,
+        triggerRatio,
+        targetRatio
+    ) {
+        const values = [
+            modelStart,
+            modelEnd,
+            viewportStart,
+            viewportEnd,
+            triggerRatio,
+            targetRatio
+        ].map(Number);
+        if (!values.every(Number.isFinite)) return undefined;
+        [modelStart, modelEnd, viewportStart, viewportEnd, triggerRatio, targetRatio] = values;
+
+        const modelSize = modelEnd - modelStart;
+        const viewportSize = viewportEnd - viewportStart;
+        if (!(modelSize > 0) || !(viewportSize > 0)) return undefined;
+
+        const visibleSize = Math.max(
+            0,
+            Math.min(modelEnd, viewportEnd) - Math.max(modelStart, viewportStart)
+        );
+        const maximumVisibleSize = Math.min(modelSize, viewportSize);
+        if (visibleSize >= maximumVisibleSize * triggerRatio) return 0;
+
+        const targetVisibleSize = maximumVisibleSize * targetRatio;
+        if (modelStart < viewportStart) {
+            return viewportStart + targetVisibleSize - modelEnd;
+        }
+        if (modelEnd > viewportEnd) {
+            return viewportEnd - targetVisibleSize - modelStart;
+        }
+        return 0;
     }
 
     function capitalize(value) {
@@ -962,6 +1273,7 @@
     function postReady(requestId) {
         postToParent('NEKO_EMBED_READY', {
             requestId: requestId || null,
+            displayMode: embeddedDisplayMode,
             components: componentList(),
             state: componentState(),
             chatMode: fixedChatMode,
@@ -969,6 +1281,7 @@
             avatarForm: detectAvatarFormState().avatarForm,
             capabilities: {
                 dynamicComponents: true,
+                displayModeAware: true,
                 fixedChatMode: true,
                 avatarFormControl: true,
                 interactiveRegions: true,
@@ -988,6 +1301,7 @@
         if (!connectedParentOrigin) connectedParentOrigin = event.origin;
 
         if (data.type === 'NEKO_EMBED_CONNECT') {
+            if (data.displayMode !== undefined) setEmbeddedDisplayMode(data.displayMode);
             if (data.components !== undefined) setComponents(data.components, 'parent-connect');
             if (data.chatMode !== undefined) setFixedChatMode(data.chatMode, 'parent-connect');
             if (data.avatarForm !== undefined) {
@@ -1028,6 +1342,7 @@
         if (data.type === 'NEKO_EMBED_GET_STATE') {
             postToParent('NEKO_EMBED_STATE', {
                 requestId: data.requestId || null,
+                displayMode: embeddedDisplayMode,
                 components: componentList(),
                 state: componentState(),
                 chatMode: fixedChatMode,
@@ -1071,6 +1386,7 @@
         toggle: (component) => toggleComponent(component, 'public-api'),
         getChatMode: () => fixedChatMode,
         setChatMode: (mode) => setFixedChatMode(mode, 'public-api'),
+        getDisplayMode: () => embeddedDisplayMode,
         getInteractiveRegions: () => collectRegions(),
         hitTest: (x, y) => hitTest(x, y),
         protocolVersion: PROTOCOL_VERSION
@@ -1115,6 +1431,11 @@
         relayPointerImmediately(event, 'cancel');
     }, { passive: true, capture: true });
     document.addEventListener('pointerleave', (event) => {
+        // pointerleave does not bubble, but a capture listener on document still
+        // observes it for every descendant. Only release the parent-side drag
+        // lock after the pointer leaves the embedded document itself; leaving
+        // the return cat (or any other control) must not interrupt a fast drag.
+        if (event.target !== document.documentElement || event.relatedTarget !== null) return;
         relayPointerImmediately(event, 'leave');
     }, { passive: true, capture: true });
     window.addEventListener('wheel', scheduleRegionReport, { passive: true });
