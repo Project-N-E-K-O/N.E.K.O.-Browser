@@ -157,7 +157,7 @@ button {
 .actions button svg,
 .route-mark svg {
   fill: none;
-  stroke: currentColor;
+  stroke: currentcolor;
   stroke-linecap: round;
   stroke-linejoin: round;
 }

@@ -31,8 +31,9 @@ test('dark mode styles only bounded controls and the offline state', () => {
 test('side panel title bar matches the floating toolbar and opens a menu overlay', () => {
   assert.match(sidepanelHtml, /class="brand-title">N\.E\.K\.O</);
   assert.match(sidepanelHtml, /class="brand-state"[\s\S]*?<span>WebUI<\/span>/);
-  assert.match(sidepanelHtml, /data-action="routes"[\s\S]*?title="菜单"[\s\S]*?aria-haspopup="menu"/);
-  assert.match(sidepanelHtml, /id="routes" role="menu" aria-label="菜单"/);
+  assert.match(sidepanelHtml, /data-action="routes"[\s\S]*?title="菜单"[\s\S]*?aria-controls="routes"[\s\S]*?aria-expanded="false"/);
+  assert.match(sidepanelHtml, /id="routes" aria-label="菜单"/);
+  assert.doesNotMatch(sidepanelHtml, /role="menu(?:item)?"|aria-haspopup="menu"/);
   assert.match(sidepanelHtml, /class="routes-head"[\s\S]*?<span>菜单<\/span>/);
   assert.doesNotMatch(sidepanelHtml, /入口|>↻<|>☰<|>↗</);
 

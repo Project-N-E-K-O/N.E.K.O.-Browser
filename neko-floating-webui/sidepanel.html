@@ -25,7 +25,6 @@
           data-action="routes"
           title="菜单"
           aria-label="菜单"
-          aria-haspopup="menu"
           aria-controls="routes"
           aria-expanded="false"
         >
@@ -37,37 +36,37 @@
       </nav>
     </header>
 
-    <div class="routes" id="routes" role="menu" aria-label="菜单" hidden>
+    <div class="routes" id="routes" aria-label="菜单" hidden>
       <div class="routes-head">
         <span>菜单</span>
         <button type="button" class="routes-close" data-action="routes" aria-label="关闭菜单">×</button>
       </div>
       <div class="routes-list">
-        <button type="button" class="route-item" role="menuitem" data-route="/">
+        <button type="button" class="route-item" data-route="/">
           <span class="route-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg>
           </span>
           <span>主界面</span>
         </button>
-        <button type="button" class="route-item" role="menuitem" data-route="/chat_full">
+        <button type="button" class="route-item" data-route="/chat_full">
           <span class="route-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M5 17.5 3.8 21l4.3-1.7A9 9 0 1 0 5 17.5Z"/><path d="M8 11h8M8 14h5"/></svg>
           </span>
           <span>完整聊天</span>
         </button>
-        <button type="button" class="route-item" role="menuitem" data-route="/model_manager">
+        <button type="button" class="route-item" data-route="/model_manager">
           <span class="route-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21c.7-4.2 3-6.3 7-6.3s6.3 2.1 7 6.3"/><path d="M8.7 7.2c1.7.1 3.2-.7 4.2-2.2.7 1.2 1.5 1.9 2.6 2.2"/></svg>
           </span>
           <span>模型</span>
         </button>
-        <button type="button" class="route-item" role="menuitem" data-route="/api_key">
+        <button type="button" class="route-item" data-route="/api_key">
           <span class="route-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M15 12v2"/></svg>
           </span>
           <span>密钥</span>
         </button>
-        <button type="button" class="route-item" role="menuitem" data-route="/memory_browser">
+        <button type="button" class="route-item" data-route="/memory_browser">
           <span class="route-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
           </span>
