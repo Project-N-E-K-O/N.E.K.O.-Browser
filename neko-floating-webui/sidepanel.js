@@ -47,9 +47,21 @@
     const routeButton = event.target.closest('[data-route]');
     if (actionButton) {
       handleAction(actionButton.dataset.action);
+      return;
     }
     if (routeButton) {
       openRoute(routeButton.dataset.route);
+      setRoutesOpen(false);
+      return;
+    }
+    if (!routesEl.hidden && !event.target.closest('.routes')) {
+      setRoutesOpen(false);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !routesEl.hidden) {
+      setRoutesOpen(false);
     }
   });
 
@@ -126,7 +138,6 @@
 
     if (action === 'routes') {
       setRoutesOpen(routesEl.hidden);
-      scheduleWebuiReflow();
       return;
     }
 
@@ -138,6 +149,10 @@
   function setRoutesOpen(open) {
     routesEl.hidden = !open;
     shell.dataset.routesOpen = String(open);
+    const menuButton = document.querySelector('[data-action="routes"][aria-controls="routes"]');
+    if (menuButton) {
+      menuButton.setAttribute('aria-expanded', String(open));
+    }
   }
 
   function openRoute(path) {

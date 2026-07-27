@@ -4,6 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
+const sidepanelHtml = read('sidepanel.html');
 const sidepanel = read('sidepanel.js');
 const css = read('sidepanel.css');
 const mainWorld = read('transparent-main-world.js');
@@ -21,10 +22,34 @@ test('side panel shell stays transparent instead of painting over the page', () 
 
 test('dark mode styles only bounded controls and the offline state', () => {
   assert.match(css, /@media \(prefers-color-scheme: dark\)/);
-  assert.match(css, /--sidebar-toolbar: rgba\(15, 23, 42, 0\.96\)/);
-  assert.match(css, /--sidebar-routes: rgba\(15, 23, 42, 0\.96\)/);
+  assert.match(css, /--sidebar-toolbar: rgba\(15, 23, 42, 0\.98\)/);
+  assert.match(css, /--sidebar-routes: #111c2b/);
   assert.match(css, /--sidebar-offline: #0f172a/);
   assert.doesNotMatch(css, /--sidebar-surface/);
+});
+
+test('side panel title bar matches the floating toolbar and opens a menu overlay', () => {
+  assert.match(sidepanelHtml, /class="brand-title">N\.E\.K\.O</);
+  assert.match(sidepanelHtml, /class="brand-state"[\s\S]*?<span>WebUI<\/span>/);
+  assert.match(sidepanelHtml, /data-action="routes"[\s\S]*?title="菜单"[\s\S]*?aria-haspopup="menu"/);
+  assert.match(sidepanelHtml, /id="routes" role="menu" aria-label="菜单"/);
+  assert.match(sidepanelHtml, /class="routes-head"[\s\S]*?<span>菜单<\/span>/);
+  assert.doesNotMatch(sidepanelHtml, /入口|>↻<|>☰<|>↗</);
+
+  assert.match(css, /\.shell\s*\{[\s\S]*?grid-template-rows: 46px minmax\(0, 1fr\)/);
+  assert.match(css, /\.toolbar\s*\{[\s\S]*?linear-gradient/);
+  assert.match(css, /\.actions button svg\s*\{[\s\S]*?stroke-width: 1\.8/);
+  assert.match(css, /\.routes\s*\{[\s\S]*?position: absolute[\s\S]*?top: 52px/);
+  assert.doesNotMatch(css, /\.shell\[data-routes-open="true"\]/);
+
+  assert.match(sidepanel, /menuButton\.setAttribute\('aria-expanded', String\(open\)\)/);
+  assert.match(sidepanel, /event\.key === 'Escape'[\s\S]*?setRoutesOpen\(false\)/);
+  const menuAction = sidepanel.match(
+    /if \(action === 'routes'\) \{([\s\S]*?)\n    \}/
+  );
+  assert.ok(menuAction, 'missing side panel menu action');
+  assert.match(menuAction[1], /setRoutesOpen\(routesEl\.hidden\)/);
+  assert.doesNotMatch(menuAction[1], /scheduleWebuiReflow/);
 });
 
 test('theme messaging cannot turn the entire extension surface opaque', () => {

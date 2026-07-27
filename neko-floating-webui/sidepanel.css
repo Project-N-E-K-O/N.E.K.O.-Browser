@@ -2,17 +2,18 @@
   color-scheme: light dark;
   font-family: Inter, "Segoe UI", Arial, sans-serif;
   --sidebar-color: #0f172a;
-  --sidebar-toolbar: rgba(255, 255, 255, 0.96);
-  --sidebar-routes: rgba(248, 250, 252, 0.96);
+  --sidebar-toolbar: rgba(255, 255, 255, 0.98);
+  --sidebar-toolbar-accent: rgba(241, 248, 255, 0.96);
+  --sidebar-routes: #ffffff;
   --sidebar-offline: #f8fafc;
-  --sidebar-border: rgba(15, 23, 42, 0.1);
-  --sidebar-button-border: rgba(15, 23, 42, 0.14);
-  --sidebar-button-bg: #ffffff;
-  --sidebar-button-color: #0f172a;
-  --sidebar-button-hover-border: rgba(79, 70, 229, 0.32);
-  --sidebar-button-hover-bg: #eef2ff;
+  --sidebar-border: rgba(148, 163, 184, 0.24);
+  --sidebar-button-border: rgba(148, 163, 184, 0.18);
+  --sidebar-button-bg: rgba(255, 255, 255, 0.82);
+  --sidebar-button-color: #475569;
+  --sidebar-button-hover-border: rgba(14, 165, 233, 0.28);
+  --sidebar-button-hover-bg: #f0f7ff;
+  --sidebar-button-hover-color: #0284c7;
   --sidebar-muted: #475569;
-  color: var(--sidebar-color);
   background: transparent;
 }
 
@@ -35,29 +36,38 @@ button {
 }
 
 .shell {
+  position: relative;
   display: grid;
-  grid-template-rows: 42px 0 minmax(0, 1fr);
+  grid-template-rows: 46px minmax(0, 1fr);
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  color: var(--sidebar-color);
   background: transparent;
-}
-
-.shell[data-routes-open="true"] {
-  grid-template-rows: 42px auto minmax(0, 1fr);
 }
 
 .toolbar {
   grid-row: 1;
+  position: relative;
+  z-index: 8;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 8px 0 12px;
+  gap: 10px;
+  min-width: 0;
+  height: 46px;
+  padding: 0 7px 0 13px;
   border-bottom: 1px solid var(--sidebar-border);
-  background: var(--sidebar-toolbar);
+  background: linear-gradient(135deg, var(--sidebar-toolbar), var(--sidebar-toolbar-accent));
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.9),
+    0 1px 0 rgba(15, 23, 42, 0.04);
+  backdrop-filter: blur(16px) saturate(1.15);
+  user-select: none;
 }
 
 .brand,
+.brand-state,
 .actions {
   display: inline-flex;
   align-items: center;
@@ -65,37 +75,66 @@ button {
 
 .brand {
   min-width: 0;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 650;
+  gap: 9px;
   white-space: nowrap;
 }
 
+.brand-title {
+  overflow: hidden;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: 0.045em;
+  text-overflow: ellipsis;
+}
+
+.brand-state {
+  flex: 0 0 auto;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px 0 7px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
 }
 
 .status-dot[data-state="online"] {
-  background: #16a34a;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
 }
 
 .status-dot[data-state="offline"] {
-  background: #dc2626;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
 }
 
 .actions {
-  gap: 4px;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--sidebar-button-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+  cursor: pointer;
 }
 
 .actions button,
-.routes button,
 .offline button {
-  border: 1px solid var(--sidebar-button-border);
-  border-radius: 6px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 7px;
   background: var(--sidebar-button-bg);
   color: var(--sidebar-button-color);
   cursor: pointer;
@@ -103,44 +142,164 @@ button {
 
 .actions button {
   display: inline-grid;
-  width: 28px;
-  height: 28px;
+  width: 27px;
+  height: 27px;
   place-items: center;
   padding: 0;
-  font-size: 12px;
-  font-weight: 700;
+  border-color: transparent;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.actions button svg,
+.route-mark svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.actions button svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
 }
 
 .actions button:hover,
-.routes button:hover,
+.actions button[aria-expanded="true"],
 .offline button:hover {
   border-color: var(--sidebar-button-hover-border);
   background: var(--sidebar-button-hover-bg);
+  color: var(--sidebar-button-hover-color);
+}
+
+.actions button:hover {
+  transform: translateY(-1px);
+}
+
+.actions button:active {
+  transform: translateY(0);
 }
 
 .routes {
-  grid-row: 2;
-  display: flex;
-  gap: 6px;
+  position: absolute;
+  z-index: 10;
+  top: 52px;
+  right: 8px;
+  width: min(232px, calc(100% - 16px));
   padding: 8px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--sidebar-border);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 12px;
   background: var(--sidebar-routes);
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.2),
+    0 3px 10px rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  animation: menu-pop 150ms ease-out;
 }
 
 .routes[hidden] {
   display: none;
 }
 
-.routes button {
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.routes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   height: 28px;
+  padding: 0 3px 5px 7px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.routes-close {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font: 16px/1 "Segoe UI", sans-serif;
+}
+
+.routes-close:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.routes-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.route-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 38px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  font: 600 11px/1 "Segoe UI", sans-serif;
+  text-align: left;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.route-item:hover {
+  border-color: rgba(14, 165, 233, 0.2);
+  background: #f0f9ff;
+  color: #0369a1;
+  transform: translateY(-1px);
+}
+
+.route-mark {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
-  padding: 0 10px;
-  font-size: 12px;
+  place-items: center;
+  border-radius: 7px;
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.route-mark svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
 }
 
 .content {
-  grid-row: 3;
+  grid-row: 2;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -191,19 +350,85 @@ button {
   padding: 0 14px;
 }
 
+@media (max-width: 280px) {
+  .brand-state {
+    display: none;
+  }
+
+  .routes-list {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
     --sidebar-color: #e2e8f0;
-    --sidebar-toolbar: rgba(15, 23, 42, 0.96);
-    --sidebar-routes: rgba(15, 23, 42, 0.96);
+    --sidebar-toolbar: rgba(15, 23, 42, 0.98);
+    --sidebar-toolbar-accent: rgba(17, 36, 56, 0.97);
+    --sidebar-routes: #111c2b;
     --sidebar-offline: #0f172a;
-    --sidebar-border: rgba(226, 232, 240, 0.14);
-    --sidebar-button-border: rgba(226, 232, 240, 0.2);
-    --sidebar-button-bg: #1e293b;
-    --sidebar-button-color: #e2e8f0;
-    --sidebar-button-hover-border: rgba(129, 140, 248, 0.55);
-    --sidebar-button-hover-bg: #312e81;
+    --sidebar-border: rgba(148, 163, 184, 0.16);
+    --sidebar-button-border: rgba(148, 163, 184, 0.14);
+    --sidebar-button-bg: rgba(30, 41, 59, 0.76);
+    --sidebar-button-color: #cbd5e1;
+    --sidebar-button-hover-border: rgba(56, 189, 248, 0.25);
+    --sidebar-button-hover-bg: rgba(14, 116, 144, 0.25);
+    --sidebar-button-hover-color: #7dd3fc;
     --sidebar-muted: #94a3b8;
+  }
+
+  .toolbar {
+    box-shadow:
+      inset 0 1px rgba(255, 255, 255, 0.05),
+      0 1px 0 rgba(0, 0, 0, 0.28);
+  }
+
+  .brand-title {
+    color: #f1f5f9;
+  }
+
+  .brand-state,
+  .actions {
+    border-color: rgba(148, 163, 184, 0.14);
+    background: rgba(15, 23, 42, 0.46);
+    color: #94a3b8;
+  }
+
+  .routes {
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow:
+      0 18px 42px rgba(0, 0, 0, 0.42),
+      0 3px 10px rgba(0, 0, 0, 0.3);
+    color: #e2e8f0;
+  }
+
+  .routes-head {
+    color: #94a3b8;
+  }
+
+  .routes-close {
+    color: #64748b;
+  }
+
+  .routes-close:hover {
+    background: #1e293b;
+    color: #e2e8f0;
+  }
+
+  .route-item {
+    background: #172334;
+    color: #cbd5e1;
+  }
+
+  .route-item:hover {
+    border-color: rgba(56, 189, 248, 0.2);
+    background: #172e43;
+    color: #7dd3fc;
+  }
+
+  .route-mark {
+    background: rgba(14, 116, 144, 0.3);
+    color: #7dd3fc;
   }
 }
