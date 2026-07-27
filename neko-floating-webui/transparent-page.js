@@ -10,6 +10,7 @@
   const MAIN_WORLD_SCRIPT_ID = 'neko-floating-webui-transparent-main-world';
   const REFLOW_RETRY_INTERVAL_MS = 250;
   const REFLOW_RETRY_MAX_WAIT_MS = 10000;
+  const SIDEPANEL_THEME_MESSAGE = 'NEKO_SIDEBAR_THEME';
   let lastReflowWidth = -1;
   let lastReflowHeight = -1;
   let reflowFrame = 0;
@@ -48,11 +49,26 @@
       return;
     }
 
-    if (!event.data || event.data.type !== 'NEKO_FLOATING_WEBUI_REFLOW') {
+    if (!event.data) {
       return;
     }
 
-    requestReflow(event.data.force === true);
+    if (event.data.type === 'NEKO_FLOATING_WEBUI_REFLOW') {
+      requestReflow(event.data.force === true);
+      return;
+    }
+
+    if (
+      isNativeSidePanel
+      && event.data.type === SIDEPANEL_THEME_MESSAGE
+      && (event.data.theme === 'dark' || event.data.theme === 'light')
+    ) {
+      window.postMessage({
+        type: 'NEKO_SIDEBAR_THEME_APPLY',
+        theme: event.data.theme,
+        _sender: 'isolated'
+      }, window.location.origin);
+    }
   });
 
   apply();

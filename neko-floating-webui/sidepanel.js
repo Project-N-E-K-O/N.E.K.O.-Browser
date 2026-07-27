@@ -6,10 +6,13 @@
   const offlineMessage = document.getElementById('offline-message');
   const routesEl = document.getElementById('routes');
   const shell = document.querySelector('.shell');
+  const preferredColorScheme = window.matchMedia?.('(prefers-color-scheme: dark)') || null;
 
   let currentWindowId = null;
   let webuiUrl = DEFAULT_WEBUI_URL;
   let isOwner = false;
+
+  preferredColorScheme?.addEventListener('change', scheduleSidePanelTheme);
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || message.type !== 'NEKO_SIDEBAR_DEACTIVATE') {
@@ -38,6 +41,7 @@
       return;
     }
     setOnline(true);
+    scheduleSidePanelTheme();
     scheduleWebuiReflow();
     checkHealth();
   });
@@ -179,6 +183,26 @@
     } catch {}
     frame.removeAttribute('src');
     return true;
+  }
+
+  function scheduleSidePanelTheme() {
+    if (!isOwner || !frame.contentWindow) {
+      return;
+    }
+    const theme = preferredColorScheme?.matches ? 'dark' : 'light';
+    [0, 80, 240, 600, 1200].forEach((delay) => {
+      window.setTimeout(() => {
+        if (!isOwner || !frame.contentWindow) {
+          return;
+        }
+        try {
+          frame.contentWindow.postMessage({
+            type: 'NEKO_SIDEBAR_THEME',
+            theme
+          }, getWebuiOrigin());
+        } catch {}
+      }, delay);
+    });
   }
 
   function scheduleWebuiReflow() {

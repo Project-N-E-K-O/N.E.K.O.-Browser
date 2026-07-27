@@ -24,11 +24,22 @@
   window.addEventListener('live2d-model-loaded', forceTransparentRenderers);
   window.addEventListener('live2d-floating-buttons-ready', forceTransparentRenderers);
   window.addEventListener('message', (event) => {
-    if (event.source !== window || !event.data || event.data.type !== 'NEKO_FLOATING_WEBUI_MAIN_WORLD_REFLOW') {
+    if (event.source !== window || !event.data) {
       return;
     }
 
-    forcePageReflow();
+    if (event.data.type === 'NEKO_FLOATING_WEBUI_MAIN_WORLD_REFLOW') {
+      forcePageReflow();
+      return;
+    }
+
+    if (
+      isNativeSidePanel
+      && event.data.type === 'NEKO_SIDEBAR_THEME_APPLY'
+      && event.data._sender === 'isolated'
+    ) {
+      applySidePanelTheme(event.data.theme);
+    }
   });
   window.addEventListener('message', (event) => {
     if (!event.data || typeof event.data.type !== 'string') {
@@ -66,6 +77,26 @@
       window.clearInterval(intervalId);
     }
   }, 250);
+
+  function applySidePanelTheme(theme) {
+    if (theme !== 'dark' && theme !== 'light') {
+      return;
+    }
+    const isDark = theme === 'dark';
+    if (window.nekoTheme && typeof window.nekoTheme.apply === 'function') {
+      try {
+        window.nekoTheme.apply(isDark, { persist: false });
+        return;
+      } catch {}
+    }
+
+    if (isDark) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    document.documentElement.classList.toggle('dark', isDark);
+  }
 
   function patchLive2DManager() {
     const Live2DManager = window.Live2DManager;

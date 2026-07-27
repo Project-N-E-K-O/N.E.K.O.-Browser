@@ -52,9 +52,17 @@ test('side panel title bar matches the floating toolbar and opens a menu overlay
   assert.doesNotMatch(menuAction[1], /scheduleWebuiReflow/);
 });
 
-test('theme messaging cannot turn the entire extension surface opaque', () => {
-  assert.doesNotMatch(sidepanel, /NEKO_SIDEBAR_THEME/);
-  assert.doesNotMatch(mainWorld, /NEKO_SIDEBAR_THEME/);
+test('side panel applies the browser theme inside WebUI without persisting it', () => {
+  assert.match(sidepanel, /matchMedia\?\.\('\(prefers-color-scheme: dark\)'\)/);
+  assert.match(sidepanel, /preferredColorScheme\?\.addEventListener\('change', scheduleSidePanelTheme\)/);
+  assert.match(sidepanel, /frame\.contentWindow\.postMessage\(\{[\s\S]*?type: 'NEKO_SIDEBAR_THEME'[\s\S]*?theme[\s\S]*?getWebuiOrigin\(\)/);
+  assert.doesNotMatch(sidepanel, /frame\.style\.setProperty\('color-scheme'/);
+
+  assert.match(transparentPage, /event\.data\.type === SIDEPANEL_THEME_MESSAGE[\s\S]*?NEKO_SIDEBAR_THEME_APPLY[\s\S]*?_sender: 'isolated'/);
+  assert.match(mainWorld, /event\.data\.type === 'NEKO_SIDEBAR_THEME_APPLY'/);
+  assert.match(mainWorld, /event\.data\._sender === 'isolated'/);
+  assert.match(mainWorld, /window\.nekoTheme\.apply\(isDark, \{ persist: false \}\)/);
+  assert.doesNotMatch(mainWorld, /localStorage\.setItem\(['"]neko-dark-mode/);
   assert.match(transparentCss, /#react-chat-window-overlay[\s\S]*background: transparent !important/);
   assert.match(transparentCss, /color-scheme: light dark !important/);
   assert.match(transparentPage, /#react-chat-window-overlay/);
