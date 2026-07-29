@@ -41,15 +41,19 @@ test('side panel title bar matches the floating toolbar and opens a menu overlay
   assert.match(css, /\.toolbar\s*\{[\s\S]*?linear-gradient/);
   assert.match(css, /\.actions button svg\s*\{[\s\S]*?stroke-width: 1\.8/);
   assert.match(css, /\.routes\s*\{[\s\S]*?position: absolute[\s\S]*?top: 52px/);
+  assert.match(css, /\.routes\s*\{[\s\S]*?max-height: calc\(100% - 60px\)/);
+  assert.match(css, /\.routes-list\s*\{[\s\S]*?overflow-y: auto/);
   assert.doesNotMatch(css, /\.shell\[data-routes-open="true"\]/);
 
   assert.match(sidepanel, /menuButton\.setAttribute\('aria-expanded', String\(open\)\)/);
-  assert.match(sidepanel, /event\.key === 'Escape'[\s\S]*?setRoutesOpen\(false\)/);
+  assert.match(sidepanel, /event\.key === 'Escape'[\s\S]*?setRoutesOpen\(false, \{ restoreFocus: true \}\)/);
+  assert.match(sidepanel, /options\.restoreFocus === true[\s\S]*?menuButton\.focus\(\{ preventScroll: true \}\)/);
   const menuAction = sidepanel.match(
     /if \(action === 'routes'\) \{([\s\S]*?)\n    \}/
   );
   assert.ok(menuAction, 'missing side panel menu action');
-  assert.match(menuAction[1], /setRoutesOpen\(routesEl\.hidden\)/);
+  assert.match(menuAction[1], /const shouldOpen = routesEl\.hidden/);
+  assert.match(menuAction[1], /setRoutesOpen\(shouldOpen, \{[\s\S]*?restoreFocus:/);
   assert.doesNotMatch(menuAction[1], /scheduleWebuiReflow/);
 });
 
@@ -57,6 +61,8 @@ test('side panel applies the browser theme inside WebUI without persisting it', 
   assert.match(sidepanel, /matchMedia\?\.\('\(prefers-color-scheme: dark\)'\)/);
   assert.match(sidepanel, /preferredColorScheme\?\.addEventListener\('change', scheduleSidePanelTheme\)/);
   assert.match(sidepanel, /frame\.contentWindow\.postMessage\(\{[\s\S]*?type: 'NEKO_SIDEBAR_THEME'[\s\S]*?theme[\s\S]*?getWebuiOrigin\(\)/);
+  assert.match(sidepanel, /const generation = \+\+themeSyncGeneration/);
+  assert.match(sidepanel, /generation !== themeSyncGeneration \|\| !isOwner \|\| !frame\.contentWindow/);
   assert.doesNotMatch(sidepanel, /frame\.style\.setProperty\('color-scheme'/);
 
   assert.match(transparentPage, /event\.data\.type === SIDEPANEL_THEME_MESSAGE[\s\S]*?NEKO_SIDEBAR_THEME_APPLY[\s\S]*?_sender: 'isolated'/);

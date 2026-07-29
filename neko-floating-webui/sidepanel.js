@@ -6,11 +6,13 @@
   const offlineMessage = document.getElementById('offline-message');
   const routesEl = document.getElementById('routes');
   const shell = document.querySelector('.shell');
+  const menuButton = document.querySelector('[data-action="routes"][aria-controls="routes"]');
   const preferredColorScheme = window.matchMedia?.('(prefers-color-scheme: dark)') || null;
 
   let currentWindowId = null;
   let webuiUrl = DEFAULT_WEBUI_URL;
   let isOwner = false;
+  let themeSyncGeneration = 0;
 
   preferredColorScheme?.addEventListener('change', scheduleSidePanelTheme);
 
@@ -50,7 +52,7 @@
     const actionButton = event.target.closest('[data-action]');
     const routeButton = event.target.closest('[data-route]');
     if (actionButton) {
-      handleAction(actionButton.dataset.action);
+      handleAction(actionButton.dataset.action, actionButton);
       return;
     }
     if (routeButton) {
@@ -65,7 +67,7 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !routesEl.hidden) {
-      setRoutesOpen(false);
+      setRoutesOpen(false, { restoreFocus: true });
     }
   });
 
@@ -127,7 +129,7 @@
     return unloaded;
   }
 
-  function handleAction(action) {
+  function handleAction(action, actionButton) {
     if (action === 'reload' || action === 'retry') {
       if (!isOwner) {
         return;
@@ -141,7 +143,10 @@
     }
 
     if (action === 'routes') {
-      setRoutesOpen(routesEl.hidden);
+      const shouldOpen = routesEl.hidden;
+      setRoutesOpen(shouldOpen, {
+        restoreFocus: !shouldOpen && actionButton !== menuButton
+      });
       return;
     }
 
@@ -150,12 +155,14 @@
     }
   }
 
-  function setRoutesOpen(open) {
+  function setRoutesOpen(open, options = {}) {
     routesEl.hidden = !open;
     shell.dataset.routesOpen = String(open);
-    const menuButton = document.querySelector('[data-action="routes"][aria-controls="routes"]');
     if (menuButton) {
       menuButton.setAttribute('aria-expanded', String(open));
+      if (!open && options.restoreFocus === true) {
+        menuButton.focus({ preventScroll: true });
+      }
     }
   }
 
@@ -175,6 +182,7 @@
   }
 
   function unloadFrame() {
+    themeSyncGeneration += 1;
     if (!frame.hasAttribute('src')) {
       return false;
     }
@@ -189,10 +197,11 @@
     if (!isOwner || !frame.contentWindow) {
       return;
     }
+    const generation = ++themeSyncGeneration;
     const theme = preferredColorScheme?.matches ? 'dark' : 'light';
     [0, 80, 240, 600, 1200].forEach((delay) => {
       window.setTimeout(() => {
-        if (!isOwner || !frame.contentWindow) {
+        if (generation !== themeSyncGeneration || !isOwner || !frame.contentWindow) {
           return;
         }
         try {

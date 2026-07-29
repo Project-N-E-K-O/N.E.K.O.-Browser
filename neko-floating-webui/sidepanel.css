@@ -189,7 +189,10 @@ button {
   z-index: 10;
   top: 52px;
   right: 8px;
+  display: flex;
+  flex-direction: column;
   width: min(232px, calc(100% - 16px));
+  max-height: calc(100% - 60px);
   padding: 8px;
   border: 1px solid rgba(148, 163, 184, 0.3);
   border-radius: 12px;
@@ -218,6 +221,7 @@ button {
 
 .routes-head {
   display: flex;
+  flex: 0 0 28px;
   align-items: center;
   justify-content: space-between;
   height: 28px;
@@ -251,6 +255,9 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 5px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .route-item {
