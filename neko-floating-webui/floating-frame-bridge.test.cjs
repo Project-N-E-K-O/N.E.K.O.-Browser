@@ -72,13 +72,26 @@ test('fullscreen loads are health-gated before the WebUI iframe navigates', () =
   const loadStart = bridge.indexOf('async function loadAllowedTarget');
   const loadEnd = bridge.indexOf('async function initialize', loadStart);
   const loadBlock = bridge.slice(loadStart, loadEnd);
-  const healthCheck = loadBlock.indexOf("type: 'NEKO_HEALTH_CHECK'");
+  const healthCheck = loadBlock.indexOf('checkHealthWithTimeout()');
   const navigation = loadBlock.indexOf('frame.src = targetUrl');
   assert.notEqual(healthCheck, -1);
   assert.notEqual(navigation, -1);
   assert.ok(healthCheck < navigation, 'health must be checked before navigating the WebUI iframe');
   assert.match(loadBlock, /NEKO_FLOATING_FRAME_OFFLINE/);
   assert.match(loadBlock, /frame\.src = 'about:blank'/);
+});
+
+test('the fullscreen health gate times out to the offline fallback', () => {
+  assert.match(bridge, /const HEALTH_GATE_TIMEOUT_MS = 4000/);
+  assert.match(bridge, /const health = await checkHealthWithTimeout\(\)/);
+
+  const timeoutStart = bridge.indexOf('async function checkHealthWithTimeout');
+  const timeoutEnd = bridge.indexOf('async function resolveAllowedTarget', timeoutStart);
+  const timeoutBlock = bridge.slice(timeoutStart, timeoutEnd);
+  assert.match(timeoutBlock, /Promise\.race\(/);
+  assert.match(timeoutBlock, /type: 'NEKO_HEALTH_CHECK'/);
+  assert.match(timeoutBlock, /window\.setTimeout\([\s\S]*?HEALTH_GATE_TIMEOUT_MS/);
+  assert.match(timeoutBlock, /window\.clearTimeout\(timeoutId\)/);
 });
 
 test('the parent can clear an offline WebUI document without unloading the bridge', () => {

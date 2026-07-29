@@ -1,6 +1,7 @@
 (() => {
   const BRIDGE_SENDER = 'neko-floating-frame-bridge';
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
+  const HEALTH_GATE_TIMEOUT_MS = 4000;
   const frame = document.getElementById('webui');
 
   let bridgeToken = null;
@@ -93,7 +94,7 @@
         return;
       }
       if (requireOnline) {
-        const health = await chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' }).catch(() => null);
+        const health = await checkHealthWithTimeout();
         if (sequence !== loadSequence) {
           return;
         }
@@ -164,6 +165,22 @@
         frame.src = targetUrl;
       }
     }, 0);
+  }
+
+  async function checkHealthWithTimeout() {
+    let timeoutId = 0;
+    try {
+      return await Promise.race([
+        chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' }).catch(() => null),
+        new Promise((resolve) => {
+          timeoutId = window.setTimeout(() => resolve(null), HEALTH_GATE_TIMEOUT_MS);
+        })
+      ]);
+    } finally {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    }
   }
 
   function clearWebui() {
