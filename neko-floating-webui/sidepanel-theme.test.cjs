@@ -48,6 +48,12 @@ test('side panel title bar matches the floating toolbar and opens a menu overlay
   assert.match(sidepanel, /menuButton\.setAttribute\('aria-expanded', String\(open\)\)/);
   assert.match(sidepanel, /event\.key === 'Escape'[\s\S]*?setRoutesOpen\(false, \{ restoreFocus: true \}\)/);
   assert.match(sidepanel, /options\.restoreFocus === true[\s\S]*?menuButton\.focus\(\{ preventScroll: true \}\)/);
+  const frameLoadHandler = sidepanel.match(
+    /frame\.addEventListener\('load', \(\) => \{([\s\S]*?)\n  \}\);/
+  );
+  assert.ok(frameLoadHandler, 'missing side panel iframe load handler');
+  assert.match(frameLoadHandler[1], /scheduleSidePanelTheme\(\)/);
+  assert.match(frameLoadHandler[1], /scheduleWebuiReflow\(\)/);
   const menuAction = sidepanel.match(
     /if \(action === 'routes'\) \{([\s\S]*?)\n    \}/
   );
