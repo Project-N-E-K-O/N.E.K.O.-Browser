@@ -1825,16 +1825,10 @@
         .catch(() => setOnline(false));
       return;
     }
-    if (data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED') {
-      if (data.targetUrl !== getFrameTargetUrl()) {
-        loadWebuiThroughFrameBridge();
-        return;
-      }
-      frameWebuiReady = true;
-      onWebuiLoad();
-      return;
-    }
-    if (data.type === 'NEKO_FLOATING_FRAME_VERIFIED') {
+    if (
+      data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED'
+      || data.type === 'NEKO_FLOATING_FRAME_VERIFIED'
+    ) {
       if (data.targetUrl !== getFrameTargetUrl()) {
         loadWebuiThroughFrameBridge();
         return;
