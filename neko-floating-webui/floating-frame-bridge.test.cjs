@@ -99,3 +99,19 @@ test('the parent can clear an offline WebUI document without unloading the bridg
   assert.match(bridge, /data\.type === 'NEKO_FLOATING_FRAME_CLEAR'/);
   assert.match(bridge, /function clearWebui\(\)[\s\S]*?frame\.src = 'about:blank'/);
 });
+
+test('an existing floating document is health-gated before fullscreen reveals it', () => {
+  assert.match(content, /type: 'NEKO_FLOATING_FRAME_VERIFY'/);
+  assert.match(bridge, /data\.type === 'NEKO_FLOATING_FRAME_VERIFY'/);
+
+  const verifyStart = bridge.indexOf('async function verifyLoadedTarget');
+  const verifyEnd = bridge.indexOf('async function initialize', verifyStart);
+  const verifyBlock = bridge.slice(verifyStart, verifyEnd);
+  const healthCheck = verifyBlock.indexOf('checkHealthWithTimeout()');
+  const verified = verifyBlock.indexOf("postToParent('NEKO_FLOATING_FRAME_VERIFIED'");
+  assert.notEqual(healthCheck, -1);
+  assert.notEqual(verified, -1);
+  assert.ok(healthCheck < verified, 'the existing frame must pass health verification before reveal');
+  assert.match(verifyBlock, /NEKO_FLOATING_FRAME_OFFLINE/);
+  assert.match(verifyBlock, /frame\.src = 'about:blank'/);
+});

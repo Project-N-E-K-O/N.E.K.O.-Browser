@@ -373,6 +373,9 @@
 
   function applyDisplayMode(mode, options = {}) {
     const previousMode = displayMode;
+    const enteringFullscreenWithLoadedFrame = mode === 'fullscreen'
+      && previousMode !== mode
+      && frameWebuiReady;
     setAvatarForm(options.avatarForm, false);
     displayMode = mode;
     if (mode === 'sidebar') {
@@ -394,10 +397,11 @@
     }
     if (mode === 'fullscreen') {
       if (panel.dataset.minimized !== 'true') {
-        ensureFrameLoaded();
-      }
-      if (previousMode !== mode && frameWebuiReady) {
-        checkHealth();
+        if (enteringFullscreenWithLoadedFrame) {
+          verifyFullscreenFrame();
+        } else {
+          ensureFrameLoaded();
+        }
       }
     } else {
       applyPanelStyles(panel, currentPanel);
@@ -1335,8 +1339,19 @@
   }
 
   function setFullscreenOfflineFallback(active) {
-    if (!panel) {
+    const shouldShow = setFullscreenFallbackVisible(active);
+    if (!shouldShow) {
       return;
+    }
+    frameWebuiReady = false;
+    resetEmbedPassthrough('fullscreen-offline');
+    stopAllPcmRelays();
+    postFrameBridgeMessage({ type: 'NEKO_FLOATING_FRAME_CLEAR' });
+  }
+
+  function setFullscreenFallbackVisible(active) {
+    if (!panel) {
+      return false;
     }
     const shouldShow = active === true
       && displayMode === 'fullscreen'
@@ -1345,7 +1360,7 @@
     panel.dataset.fullscreenOffline = String(shouldShow);
     if (!shouldShow) {
       fullscreenWakePosition = null;
-      return;
+      return false;
     }
     if (!wasShown || !fullscreenWakePosition) {
       const initialPosition = clampMinimizedPanelPosition(currentPanel);
@@ -1355,10 +1370,20 @@
       };
     }
     applyFullscreenWakePosition();
+    return true;
+  }
+
+  function verifyFullscreenFrame() {
     frameWebuiReady = false;
-    resetEmbedPassthrough('fullscreen-offline');
+    setFullscreenFallbackVisible(true);
+    resetEmbedPassthrough('fullscreen-health-gate');
     stopAllPcmRelays();
-    postFrameBridgeMessage({ type: 'NEKO_FLOATING_FRAME_CLEAR' });
+    if (!postFrameBridgeMessage({
+      type: 'NEKO_FLOATING_FRAME_VERIFY',
+      targetUrl: getFrameTargetUrl()
+    })) {
+      retryFullscreenWebui();
+    }
   }
 
   function ensureFrameLoaded() {
@@ -1801,6 +1826,15 @@
       return;
     }
     if (data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED') {
+      if (data.targetUrl !== getFrameTargetUrl()) {
+        loadWebuiThroughFrameBridge();
+        return;
+      }
+      frameWebuiReady = true;
+      onWebuiLoad();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_VERIFIED') {
       if (data.targetUrl !== getFrameTargetUrl()) {
         loadWebuiThroughFrameBridge();
         return;

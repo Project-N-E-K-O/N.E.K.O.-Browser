@@ -285,6 +285,23 @@ test('the fullscreen wake fallback rebuilds an unready bridge before retrying', 
   assert.match(retryBlock, /loadWebuiThroughFrameBridge\(\)/);
 });
 
+test('entering fullscreen verifies an existing frame before exposing it', () => {
+  const modeBlock = functionBlock('applyDisplayMode', 'ensurePanel');
+  assert.match(modeBlock, /enteringFullscreenWithLoadedFrame/);
+  assert.match(modeBlock, /verifyFullscreenFrame\(\)/);
+
+  const verifyBlock = functionBlock('verifyFullscreenFrame', 'ensureFrameLoaded');
+  assert.match(verifyBlock, /frameWebuiReady = false/);
+  assert.match(verifyBlock, /setFullscreenFallbackVisible\(true\)/);
+  assert.match(verifyBlock, /type: 'NEKO_FLOATING_FRAME_VERIFY'/);
+  assert.match(verifyBlock, /retryFullscreenWebui\(\)/);
+
+  const bridgeMessageBlock = functionBlock('handleFrameBridgeMessage', 'ensureFrameBridgeToken');
+  assert.match(bridgeMessageBlock, /data\.type === 'NEKO_FLOATING_FRAME_VERIFIED'/);
+  assert.match(bridgeMessageBlock, /frameWebuiReady = true/);
+  assert.match(bridgeMessageBlock, /onWebuiLoad\(\)/);
+});
+
 test('dragging the fullscreen offline wake cat does not overwrite floating panel position', () => {
   const startBlock = functionBlock('startWakeDrag', 'moveWakeDrag');
   assert.match(startBlock, /fullscreenWakePosition\?\.right/);
