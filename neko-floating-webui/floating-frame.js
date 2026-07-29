@@ -43,7 +43,7 @@
     if (data.type === 'NEKO_FLOATING_FRAME_LOAD') {
       parentOrigin = event.origin;
       setColorScheme(data.colorScheme);
-      loadAllowedTarget(data.targetUrl);
+      loadAllowedTarget(data.targetUrl, data.requireOnline === true);
       return;
     }
 
@@ -52,6 +52,10 @@
     }
     if (data.type === 'NEKO_FLOATING_FRAME_RELOAD') {
       reloadWebui();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_CLEAR') {
+      clearWebui();
       return;
     }
     if (data.type === 'NEKO_FLOATING_FRAME_COLOR_SCHEME') {
@@ -81,12 +85,27 @@
     } catch {}
   }
 
-  async function loadAllowedTarget(value) {
+  async function loadAllowedTarget(value, requireOnline) {
     const sequence = ++loadSequence;
     try {
       const allowed = await resolveAllowedTarget(value);
       if (sequence !== loadSequence) {
         return;
+      }
+      if (requireOnline) {
+        const health = await chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' }).catch(() => null);
+        if (sequence !== loadSequence) {
+          return;
+        }
+        if (health?.online !== true) {
+          targetUrl = null;
+          targetOrigin = null;
+          frame.src = 'about:blank';
+          postToParent('NEKO_FLOATING_FRAME_OFFLINE', {
+            targetUrl: allowed.toString()
+          });
+          return;
+        }
       }
       targetUrl = allowed.toString();
       targetOrigin = allowed.origin;
@@ -145,6 +164,13 @@
         frame.src = targetUrl;
       }
     }, 0);
+  }
+
+  function clearWebui() {
+    loadSequence += 1;
+    targetUrl = null;
+    targetOrigin = null;
+    frame.src = 'about:blank';
   }
 
   function setColorScheme(value) {

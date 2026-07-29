@@ -217,14 +217,38 @@ test('passthrough pointer movement refreshes embedded regions at bounded cadence
   assert.match(resetBlock, /lastEmbedRegionRefreshAt = 0/);
 });
 
-test('fullscreen uses the embedded avatar without a separate extension wake button', () => {
+test('fullscreen uses the embedded avatar except for the offline wake fallback', () => {
   assert.match(
     source,
     /data-display-mode="fullscreen"\]\s+#\$\{WAKE_ID\}\s*\{\s*display: none !important/
   );
+  assert.match(
+    source,
+    /data-display-mode="fullscreen"\]\[data-fullscreen-offline="true"\]\s+#\$\{WAKE_ID\}[\s\S]*?display: flex !important/
+  );
+  assert.match(
+    source,
+    /data-display-mode="fullscreen"\]\[data-fullscreen-offline="true"\]\s+#\$\{FRAME_ID\}[\s\S]*?visibility: hidden !important/
+  );
   const dragBlock = functionBlock('startWakeDrag', 'moveWakeDrag');
-  assert.match(dragBlock, /displayMode === 'fullscreen'/);
+  assert.match(dragBlock, /panel\.dataset\.fullscreenOffline === 'true'/);
   assert.doesNotMatch(source, /wakeFullscreen/);
+});
+
+test('fullscreen offline fallback is transient and retries through the bridge', () => {
+  const onlineBlock = functionBlock('setOnline', 'setFullscreenOfflineFallback');
+  assert.match(onlineBlock, /setFullscreenOfflineFallback\(false\)/);
+  assert.match(onlineBlock, /setFullscreenOfflineFallback\(true\)/);
+
+  const fallbackBlock = functionBlock('setFullscreenOfflineFallback', 'ensureFrameLoaded');
+  assert.match(fallbackBlock, /displayMode === 'fullscreen'/);
+  assert.match(fallbackBlock, /panel\.dataset\.minimized === 'false'/);
+  assert.match(fallbackBlock, /type: 'NEKO_FLOATING_FRAME_CLEAR'/);
+  assert.doesNotMatch(fallbackBlock, /saveState/);
+
+  const clickBlock = functionBlock('handleWakeClick', 'closePanel');
+  assert.match(clickBlock, /panel\?\.dataset\.fullscreenOffline === 'true'/);
+  assert.match(clickBlock, /loadWebuiThroughFrameBridge\(\)/);
 });
 
 test('the collapsed cat uses a normal click event while dragging suppresses accidental clicks', () => {

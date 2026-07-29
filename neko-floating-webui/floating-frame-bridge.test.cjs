@@ -64,3 +64,25 @@ test('the bridge transfers the microphone port instead of cloning it', () => {
   assert.match(bridge, /Array\.from\(event\.ports \|\| \[\]\)/);
   assert.match(bridge, /data\.type\.startsWith\('NEKO_PCM_'\) && data\._sender === 'floating'/);
 });
+
+test('fullscreen loads are health-gated before the WebUI iframe navigates', () => {
+  assert.match(content, /requireOnline: displayMode === 'fullscreen'/);
+  assert.match(bridge, /loadAllowedTarget\(data\.targetUrl, data\.requireOnline === true\)/);
+
+  const loadStart = bridge.indexOf('async function loadAllowedTarget');
+  const loadEnd = bridge.indexOf('async function initialize', loadStart);
+  const loadBlock = bridge.slice(loadStart, loadEnd);
+  const healthCheck = loadBlock.indexOf("type: 'NEKO_HEALTH_CHECK'");
+  const navigation = loadBlock.indexOf('frame.src = targetUrl');
+  assert.notEqual(healthCheck, -1);
+  assert.notEqual(navigation, -1);
+  assert.ok(healthCheck < navigation, 'health must be checked before navigating the WebUI iframe');
+  assert.match(loadBlock, /NEKO_FLOATING_FRAME_OFFLINE/);
+  assert.match(loadBlock, /frame\.src = 'about:blank'/);
+});
+
+test('the parent can clear an offline WebUI document without unloading the bridge', () => {
+  assert.match(content, /type: 'NEKO_FLOATING_FRAME_CLEAR'/);
+  assert.match(bridge, /data\.type === 'NEKO_FLOATING_FRAME_CLEAR'/);
+  assert.match(bridge, /function clearWebui\(\)[\s\S]*?frame\.src = 'about:blank'/);
+});

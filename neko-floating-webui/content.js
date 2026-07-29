@@ -351,6 +351,7 @@
     surfaceComponents = normalizeSurfaceComponents(state.surfaceComponents);
     chatSurfaceMode = normalizeChatSurfaceMode(state.chatSurfaceMode);
     panel.dataset.displayMode = displayMode;
+    panel.dataset.fullscreenOffline = 'false';
     panel.hidden = false;
     applyPanelStyles(panel, currentPanel);
   }
@@ -367,6 +368,9 @@
       ensurePanel();
     }
     panel.dataset.displayMode = mode;
+    if (mode !== 'fullscreen') {
+      setFullscreenOfflineFallback(false);
+    }
     if (typeof options.minimized === 'boolean') {
       setMinimized(options.minimized, false);
     }
@@ -376,6 +380,9 @@
     if (mode === 'fullscreen') {
       if (panel.dataset.minimized !== 'true') {
         ensureFrameLoaded();
+      }
+      if (previousMode !== mode && frameWebuiReady) {
+        checkHealth();
       }
     } else {
       applyPanelStyles(panel, currentPanel);
@@ -876,6 +883,22 @@
         display: none !important;
       }
 
+      #${PANEL_ID}[data-display-mode="fullscreen"][data-fullscreen-offline="true"] #${FRAME_ID} {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"][data-fullscreen-offline="true"] #${WAKE_ID} {
+        position: fixed;
+        right: clamp(8px, var(--neko-wake-right, 24px), calc(100vw - ${MINIMIZED_SIZE.width}px));
+        bottom: clamp(8px, var(--neko-wake-bottom, 24px), calc(100vh - ${MINIMIZED_SIZE.height}px));
+        z-index: 2;
+        display: flex !important;
+        width: ${MINIMIZED_SIZE.width}px;
+        height: ${MINIMIZED_SIZE.height}px;
+        pointer-events: auto !important;
+      }
+
       #${PANEL_ID}[data-resize-direction="e"],
       #${PANEL_ID}[data-resize-direction="e"] * {
         cursor: ew-resize !important;
@@ -985,6 +1008,7 @@
     panel.dataset.routesOpen = 'false';
     panel.dataset.componentsOpen = 'false';
     panel.dataset.displayMode = 'floating';
+    panel.dataset.fullscreenOffline = 'false';
     panel.dataset.embedInteractive = 'false';
     panel.dataset.embedProtocol = 'idle';
 
@@ -1267,6 +1291,11 @@
 
   function setOnline(online) {
     updateOfflineMessage();
+    if (online === true) {
+      setFullscreenOfflineFallback(false);
+    } else if (online === false) {
+      setFullscreenOfflineFallback(true);
+    }
     if (!statusDot) {
       return;
     }
@@ -1279,6 +1308,23 @@
     } else {
       delete statusDot.dataset.state;
     }
+  }
+
+  function setFullscreenOfflineFallback(active) {
+    if (!panel) {
+      return;
+    }
+    const shouldShow = active === true
+      && displayMode === 'fullscreen'
+      && panel.dataset.minimized === 'false';
+    panel.dataset.fullscreenOffline = String(shouldShow);
+    if (!shouldShow) {
+      return;
+    }
+    frameWebuiReady = false;
+    resetEmbedPassthrough('fullscreen-offline');
+    stopAllPcmRelays();
+    postFrameBridgeMessage({ type: 'NEKO_FLOATING_FRAME_CLEAR' });
   }
 
   function ensureFrameLoaded() {
@@ -1329,6 +1375,7 @@
       currentPanel = expandedPanel;
     }
     if (minimized) {
+      setFullscreenOfflineFallback(false);
       setAvatarForm('cat', false);
     }
     panel.dataset.minimized = String(minimized);
@@ -1481,8 +1528,10 @@
     if (event.button !== 0 || !panel || !wakeButton) {
       return;
     }
-    // 全屏模式直接使用 WebUI 自带的猫；插件唤醒胶囊只属于最小化浮窗。
-    if (displayMode === 'fullscreen' || panel.dataset.minimized !== 'true') {
+    // 全屏在线时直接使用 WebUI 自带的猫；后端离线时允许拖动扩展提供的临时唤醒入口。
+    const fullscreenOfflineWake = displayMode === 'fullscreen'
+      && panel.dataset.fullscreenOffline === 'true';
+    if (!fullscreenOfflineWake && (displayMode === 'fullscreen' || panel.dataset.minimized !== 'true')) {
       return;
     }
     suppressWakeClick = false;
@@ -1562,6 +1611,20 @@
       return;
     }
     if (
+      displayMode === 'fullscreen'
+      && panel?.dataset.fullscreenOffline === 'true'
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOnline(null);
+      if (frameBridgeReady) {
+        loadWebuiThroughFrameBridge();
+      } else {
+        ensureFrameLoaded();
+      }
+      return;
+    }
+    if (
       displayMode !== 'fullscreen'
       && panel?.dataset.minimized === 'true'
     ) {
@@ -1634,6 +1697,7 @@
     return postFrameBridgeMessage({
       type: 'NEKO_FLOATING_FRAME_LOAD',
       targetUrl: getFrameTargetUrl(),
+      requireOnline: displayMode === 'fullscreen',
       colorScheme: syncFrameColorScheme()
     });
   }
@@ -1673,6 +1737,15 @@
       }
       frameWebuiReady = true;
       onWebuiLoad();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_OFFLINE') {
+      if (data.targetUrl !== getFrameTargetUrl()) {
+        return;
+      }
+      frameWebuiReady = false;
+      resetEmbedPassthrough('frame-offline');
+      setOnline(false);
       return;
     }
     if (data.type === 'NEKO_FLOATING_FRAME_ERROR') {
@@ -2194,6 +2267,9 @@
   }
 
   function applyPanelStyles(target, nextPanel) {
+    const wakePanel = clampMinimizedPanelPosition(nextPanel);
+    target.style.setProperty('--neko-wake-right', `${wakePanel.right}px`);
+    target.style.setProperty('--neko-wake-bottom', `${wakePanel.bottom}px`);
     if (target.dataset.displayMode === 'fullscreen') {
       return;
     }
