@@ -73,6 +73,7 @@
   let dragSession = null;
   let resizeSession = null;
   let wakeDragSession = null;
+  let fullscreenWakePosition = null;
   let suppressWakeClick = false;
   let suppressWakeClickTimer = 0;
 
@@ -82,6 +83,7 @@
   let frameBridgeTokenRequest = null;
   let frameBridgeReady = false;
   let frameWebuiReady = false;
+  let healthCheckSequence = 0;
   let embedReady = false;
   let embedConnectSent = false;
   let embedRegions = [];
@@ -250,6 +252,17 @@
       return;
     }
     if (displayMode === 'fullscreen') {
+      if (panel.dataset.fullscreenOffline === 'true' && fullscreenWakePosition) {
+        const clampedPosition = clampMinimizedPanelPosition({
+          ...currentPanel,
+          ...fullscreenWakePosition
+        });
+        fullscreenWakePosition = {
+          right: clampedPosition.right,
+          bottom: clampedPosition.bottom
+        };
+        applyFullscreenWakePosition();
+      }
       return;
     }
     const rect = panel.getBoundingClientRect();
@@ -339,6 +352,7 @@
   }
 
   function showPanelShell(state) {
+    healthCheckSequence += 1;
     ensurePanel();
     currentPanel = normalizePanel({
       ...DEFAULT_STATE.panel,
@@ -351,12 +365,17 @@
     surfaceComponents = normalizeSurfaceComponents(state.surfaceComponents);
     chatSurfaceMode = normalizeChatSurfaceMode(state.chatSurfaceMode);
     panel.dataset.displayMode = displayMode;
+    panel.dataset.fullscreenOffline = 'false';
+    fullscreenWakePosition = null;
     panel.hidden = false;
     applyPanelStyles(panel, currentPanel);
   }
 
   function applyDisplayMode(mode, options = {}) {
     const previousMode = displayMode;
+    const enteringFullscreenWithLoadedFrame = mode === 'fullscreen'
+      && previousMode !== mode
+      && frameWebuiReady;
     setAvatarForm(options.avatarForm, false);
     displayMode = mode;
     if (mode === 'sidebar') {
@@ -367,6 +386,9 @@
       ensurePanel();
     }
     panel.dataset.displayMode = mode;
+    if (mode !== 'fullscreen') {
+      setFullscreenOfflineFallback(false);
+    }
     if (typeof options.minimized === 'boolean') {
       setMinimized(options.minimized, false);
     }
@@ -375,7 +397,11 @@
     }
     if (mode === 'fullscreen') {
       if (panel.dataset.minimized !== 'true') {
-        ensureFrameLoaded();
+        if (enteringFullscreenWithLoadedFrame) {
+          verifyFullscreenFrame();
+        } else {
+          ensureFrameLoaded();
+        }
       }
     } else {
       applyPanelStyles(panel, currentPanel);
@@ -876,6 +902,22 @@
         display: none !important;
       }
 
+      #${PANEL_ID}[data-display-mode="fullscreen"][data-fullscreen-offline="true"] #${FRAME_ID} {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
+      #${PANEL_ID}[data-display-mode="fullscreen"][data-fullscreen-offline="true"] #${WAKE_ID} {
+        position: fixed;
+        right: clamp(8px, var(--neko-wake-right, 24px), calc(100vw - ${MINIMIZED_SIZE.width}px));
+        bottom: clamp(8px, var(--neko-wake-bottom, 24px), calc(100vh - ${MINIMIZED_SIZE.height}px));
+        z-index: 2;
+        display: flex !important;
+        width: ${MINIMIZED_SIZE.width}px;
+        height: ${MINIMIZED_SIZE.height}px;
+        pointer-events: auto !important;
+      }
+
       #${PANEL_ID}[data-resize-direction="e"],
       #${PANEL_ID}[data-resize-direction="e"] * {
         cursor: ew-resize !important;
@@ -985,6 +1027,7 @@
     panel.dataset.routesOpen = 'false';
     panel.dataset.componentsOpen = 'false';
     panel.dataset.displayMode = 'floating';
+    panel.dataset.fullscreenOffline = 'false';
     panel.dataset.embedInteractive = 'false';
     panel.dataset.embedProtocol = 'idle';
 
@@ -1257,16 +1300,30 @@
     if (!offlineEl) {
       return;
     }
+    const sequence = ++healthCheckSequence;
+    const checkedWebuiUrl = webuiUrl;
+    let online = false;
     try {
       const response = await chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' });
-      setOnline(response?.online === true);
-    } catch {
-      setOnline(false);
+      online = response?.online === true;
+    } catch {}
+    if (sequence !== healthCheckSequence || checkedWebuiUrl !== webuiUrl) {
+      return;
     }
+    setOnline(online);
   }
 
   function setOnline(online) {
     updateOfflineMessage();
+    if (online === true || online === false) {
+      // A bridge load/error is more recent than any health request that is still pending.
+      healthCheckSequence += 1;
+    }
+    if (online === true) {
+      setFullscreenOfflineFallback(false);
+    } else if (online === false) {
+      setFullscreenOfflineFallback(true);
+    }
     if (!statusDot) {
       return;
     }
@@ -1278,6 +1335,54 @@
       if (offlineEl) offlineEl.hidden = false;
     } else {
       delete statusDot.dataset.state;
+    }
+  }
+
+  function setFullscreenOfflineFallback(active) {
+    const shouldShow = setFullscreenFallbackVisible(active);
+    if (!shouldShow) {
+      return;
+    }
+    frameWebuiReady = false;
+    resetEmbedPassthrough('fullscreen-offline');
+    stopAllPcmRelays();
+    postFrameBridgeMessage({ type: 'NEKO_FLOATING_FRAME_CLEAR' });
+  }
+
+  function setFullscreenFallbackVisible(active) {
+    if (!panel) {
+      return false;
+    }
+    const shouldShow = active === true
+      && displayMode === 'fullscreen'
+      && panel.dataset.minimized === 'false';
+    const wasShown = panel.dataset.fullscreenOffline === 'true';
+    panel.dataset.fullscreenOffline = String(shouldShow);
+    if (!shouldShow) {
+      fullscreenWakePosition = null;
+      return false;
+    }
+    if (!wasShown || !fullscreenWakePosition) {
+      const initialPosition = clampMinimizedPanelPosition(currentPanel);
+      fullscreenWakePosition = {
+        right: initialPosition.right,
+        bottom: initialPosition.bottom
+      };
+    }
+    applyFullscreenWakePosition();
+    return true;
+  }
+
+  function verifyFullscreenFrame() {
+    frameWebuiReady = false;
+    setFullscreenFallbackVisible(true);
+    resetEmbedPassthrough('fullscreen-health-gate');
+    stopAllPcmRelays();
+    if (!postFrameBridgeMessage({
+      type: 'NEKO_FLOATING_FRAME_VERIFY',
+      targetUrl: getFrameTargetUrl()
+    })) {
+      retryFullscreenWebui();
     }
   }
 
@@ -1329,6 +1434,7 @@
       currentPanel = expandedPanel;
     }
     if (minimized) {
+      setFullscreenOfflineFallback(false);
       setAvatarForm('cat', false);
     }
     panel.dataset.minimized = String(minimized);
@@ -1481,8 +1587,10 @@
     if (event.button !== 0 || !panel || !wakeButton) {
       return;
     }
-    // 全屏模式直接使用 WebUI 自带的猫；插件唤醒胶囊只属于最小化浮窗。
-    if (displayMode === 'fullscreen' || panel.dataset.minimized !== 'true') {
+    // 全屏在线时直接使用 WebUI 自带的猫；后端离线时允许拖动扩展提供的临时唤醒入口。
+    const fullscreenOfflineWake = displayMode === 'fullscreen'
+      && panel.dataset.fullscreenOffline === 'true';
+    if (!fullscreenOfflineWake && (displayMode === 'fullscreen' || panel.dataset.minimized !== 'true')) {
       return;
     }
     suppressWakeClick = false;
@@ -1495,8 +1603,13 @@
       pointerId: event.pointerId,
       startX: getPointerScreenX(event),
       startY: getPointerScreenY(event),
-      startRight: currentPanel.right,
-      startBottom: currentPanel.bottom,
+      startRight: fullscreenOfflineWake
+        ? fullscreenWakePosition?.right ?? currentPanel.right
+        : currentPanel.right,
+      startBottom: fullscreenOfflineWake
+        ? fullscreenWakePosition?.bottom ?? currentPanel.bottom
+        : currentPanel.bottom,
+      fullscreenOffline: fullscreenOfflineWake,
       moved: false
     };
     panel.dataset.wakeDragging = 'true';
@@ -1518,12 +1631,21 @@
     }
     wakeDragSession.moved = true;
 
-    currentPanel = clampMinimizedPanelPosition({
+    const nextPosition = clampMinimizedPanelPosition({
       ...currentPanel,
       right: wakeDragSession.startRight - deltaX,
       bottom: wakeDragSession.startBottom - deltaY
     });
-    applyPanelStyles(panel, currentPanel);
+    if (wakeDragSession.fullscreenOffline) {
+      fullscreenWakePosition = {
+        right: nextPosition.right,
+        bottom: nextPosition.bottom
+      };
+      applyFullscreenWakePosition();
+    } else {
+      currentPanel = nextPosition;
+      applyPanelStyles(panel, currentPanel);
+    }
   }
 
   function endWakeDrag(event) {
@@ -1531,6 +1653,7 @@
       return;
     }
     const moved = wakeDragSession.moved;
+    const fullscreenOffline = wakeDragSession.fullscreenOffline;
     wakeDragSession = null;
     if (panel) {
       delete panel.dataset.wakeDragging;
@@ -1541,7 +1664,9 @@
     if (moved) {
       event.preventDefault();
       event.stopPropagation();
-      saveState({ panel: currentPanel });
+      if (!fullscreenOffline) {
+        saveState({ panel: currentPanel });
+      }
       suppressWakeClick = true;
       suppressWakeClickTimer = window.setTimeout(() => {
         suppressWakeClick = false;
@@ -1562,6 +1687,16 @@
       return;
     }
     if (
+      displayMode === 'fullscreen'
+      && panel?.dataset.fullscreenOffline === 'true'
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOnline(null);
+      retryFullscreenWebui();
+      return;
+    }
+    if (
       displayMode !== 'fullscreen'
       && panel?.dataset.minimized === 'true'
     ) {
@@ -1570,6 +1705,7 @@
   }
 
   function closePanel() {
+    healthCheckSequence += 1;
     resetEmbedPassthrough('panel-close');
     unloadFrame();
     stopAllPcmRelays();
@@ -1626,6 +1762,28 @@
     frame.src = FRAME_BRIDGE_URL;
   }
 
+  function retryFullscreenWebui() {
+    if (frameBridgeReady && frameBridgeToken) {
+      if (!loadWebuiThroughFrameBridge()) {
+        reloadFrameBridge();
+      }
+      return;
+    }
+    ensureFrameBridgeToken()
+      .then(() => {
+        if (frameBridgeReady) {
+          if (!loadWebuiThroughFrameBridge()) {
+            reloadFrameBridge();
+          }
+          return;
+        }
+        reloadFrameBridge();
+      })
+      .catch(() => {
+        reloadFrameBridge();
+      });
+  }
+
   function loadWebuiThroughFrameBridge() {
     if (!frameBridgeReady) {
       return false;
@@ -1634,6 +1792,7 @@
     return postFrameBridgeMessage({
       type: 'NEKO_FLOATING_FRAME_LOAD',
       targetUrl: getFrameTargetUrl(),
+      requireOnline: displayMode === 'fullscreen',
       colorScheme: syncFrameColorScheme()
     });
   }
@@ -1666,13 +1825,25 @@
         .catch(() => setOnline(false));
       return;
     }
-    if (data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED') {
+    if (
+      data.type === 'NEKO_FLOATING_FRAME_WEBUI_LOADED'
+      || data.type === 'NEKO_FLOATING_FRAME_VERIFIED'
+    ) {
       if (data.targetUrl !== getFrameTargetUrl()) {
         loadWebuiThroughFrameBridge();
         return;
       }
       frameWebuiReady = true;
       onWebuiLoad();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_OFFLINE') {
+      if (data.targetUrl !== getFrameTargetUrl()) {
+        return;
+      }
+      frameWebuiReady = false;
+      resetEmbedPassthrough('frame-offline');
+      setOnline(false);
       return;
     }
     if (data.type === 'NEKO_FLOATING_FRAME_ERROR') {
@@ -2194,6 +2365,9 @@
   }
 
   function applyPanelStyles(target, nextPanel) {
+    const wakePanel = clampMinimizedPanelPosition(nextPanel);
+    target.style.setProperty('--neko-wake-right', `${wakePanel.right}px`);
+    target.style.setProperty('--neko-wake-bottom', `${wakePanel.bottom}px`);
     if (target.dataset.displayMode === 'fullscreen') {
       return;
     }
@@ -2201,6 +2375,14 @@
     target.style.height = `${nextPanel.height}px`;
     target.style.right = `${nextPanel.right}px`;
     target.style.bottom = `${nextPanel.bottom}px`;
+  }
+
+  function applyFullscreenWakePosition() {
+    if (!panel || !fullscreenWakePosition) {
+      return;
+    }
+    panel.style.setProperty('--neko-wake-right', `${fullscreenWakePosition.right}px`);
+    panel.style.setProperty('--neko-wake-bottom', `${fullscreenWakePosition.bottom}px`);
   }
 
   function normalizePanel(nextPanel) {

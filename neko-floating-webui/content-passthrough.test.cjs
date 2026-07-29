@@ -217,14 +217,104 @@ test('passthrough pointer movement refreshes embedded regions at bounded cadence
   assert.match(resetBlock, /lastEmbedRegionRefreshAt = 0/);
 });
 
-test('fullscreen uses the embedded avatar without a separate extension wake button', () => {
+test('fullscreen uses the embedded avatar except for the offline wake fallback', () => {
   assert.match(
     source,
     /data-display-mode="fullscreen"\]\s+#\$\{WAKE_ID\}\s*\{\s*display: none !important/
   );
+  assert.match(
+    source,
+    /data-display-mode="fullscreen"\]\[data-fullscreen-offline="true"\]\s+#\$\{WAKE_ID\}[\s\S]*?display: flex !important/
+  );
+  assert.match(
+    source,
+    /data-display-mode="fullscreen"\]\[data-fullscreen-offline="true"\]\s+#\$\{FRAME_ID\}[\s\S]*?visibility: hidden !important/
+  );
   const dragBlock = functionBlock('startWakeDrag', 'moveWakeDrag');
-  assert.match(dragBlock, /displayMode === 'fullscreen'/);
+  assert.match(dragBlock, /panel\.dataset\.fullscreenOffline === 'true'/);
   assert.doesNotMatch(source, /wakeFullscreen/);
+});
+
+test('fullscreen offline fallback is transient and retries through the bridge', () => {
+  const onlineBlock = functionBlock('setOnline', 'setFullscreenOfflineFallback');
+  assert.match(onlineBlock, /setFullscreenOfflineFallback\(false\)/);
+  assert.match(onlineBlock, /setFullscreenOfflineFallback\(true\)/);
+
+  const fallbackBlock = functionBlock('setFullscreenOfflineFallback', 'ensureFrameLoaded');
+  assert.match(fallbackBlock, /displayMode === 'fullscreen'/);
+  assert.match(fallbackBlock, /panel\.dataset\.minimized === 'false'/);
+  assert.match(fallbackBlock, /type: 'NEKO_FLOATING_FRAME_CLEAR'/);
+  assert.doesNotMatch(fallbackBlock, /saveState/);
+
+  const clickBlock = functionBlock('handleWakeClick', 'closePanel');
+  assert.match(clickBlock, /panel\?\.dataset\.fullscreenOffline === 'true'/);
+  assert.match(clickBlock, /retryFullscreenWebui\(\)/);
+});
+
+test('stale health responses cannot clear a newer fullscreen load', () => {
+  const healthBlock = functionBlock('checkHealth', 'setOnline');
+  assert.match(healthBlock, /const sequence = \+\+healthCheckSequence/);
+  assert.match(healthBlock, /const checkedWebuiUrl = webuiUrl/);
+  assert.match(healthBlock, /sequence !== healthCheckSequence/);
+  assert.match(healthBlock, /checkedWebuiUrl !== webuiUrl/);
+  assert.ok(
+    healthBlock.indexOf('sequence !== healthCheckSequence') < healthBlock.indexOf('setOnline(online)'),
+    'stale response checks must run before applying connectivity state'
+  );
+  const onlineBlock = functionBlock('setOnline', 'setFullscreenOfflineFallback');
+  assert.match(onlineBlock, /healthCheckSequence \+= 1/);
+});
+
+test('panel lifecycle changes invalidate health checks from older panel instances', () => {
+  const showBlock = functionBlock('showPanelShell', 'applyDisplayMode');
+  assert.match(showBlock, /healthCheckSequence \+= 1/);
+
+  const closeBlock = functionBlock('closePanel', 'getFrameTargetUrl');
+  assert.match(closeBlock, /healthCheckSequence \+= 1/);
+  assert.ok(
+    closeBlock.indexOf('healthCheckSequence += 1') < closeBlock.indexOf("resetEmbedPassthrough('panel-close')"),
+    'pending checks must be invalidated before the old panel is torn down'
+  );
+});
+
+test('the fullscreen wake fallback rebuilds an unready bridge before retrying', () => {
+  const retryBlock = functionBlock('retryFullscreenWebui', 'loadWebuiThroughFrameBridge');
+  assert.match(retryBlock, /frameBridgeReady && frameBridgeToken/);
+  assert.match(retryBlock, /ensureFrameBridgeToken\(\)/);
+  assert.match(retryBlock, /reloadFrameBridge\(\)/);
+  assert.match(retryBlock, /loadWebuiThroughFrameBridge\(\)/);
+});
+
+test('entering fullscreen verifies an existing frame before exposing it', () => {
+  const modeBlock = functionBlock('applyDisplayMode', 'ensurePanel');
+  assert.match(modeBlock, /enteringFullscreenWithLoadedFrame/);
+  assert.match(modeBlock, /verifyFullscreenFrame\(\)/);
+
+  const verifyBlock = functionBlock('verifyFullscreenFrame', 'ensureFrameLoaded');
+  assert.match(verifyBlock, /frameWebuiReady = false/);
+  assert.match(verifyBlock, /setFullscreenFallbackVisible\(true\)/);
+  assert.match(verifyBlock, /type: 'NEKO_FLOATING_FRAME_VERIFY'/);
+  assert.match(verifyBlock, /retryFullscreenWebui\(\)/);
+
+  const bridgeMessageBlock = functionBlock('handleFrameBridgeMessage', 'ensureFrameBridgeToken');
+  assert.match(bridgeMessageBlock, /data\.type === 'NEKO_FLOATING_FRAME_VERIFIED'/);
+  assert.match(bridgeMessageBlock, /frameWebuiReady = true/);
+  assert.match(bridgeMessageBlock, /onWebuiLoad\(\)/);
+});
+
+test('dragging the fullscreen offline wake cat does not overwrite floating panel position', () => {
+  const startBlock = functionBlock('startWakeDrag', 'moveWakeDrag');
+  assert.match(startBlock, /fullscreenWakePosition\?\.right/);
+  assert.match(startBlock, /fullscreenOffline: fullscreenOfflineWake/);
+
+  const moveBlock = functionBlock('moveWakeDrag', 'endWakeDrag');
+  assert.match(moveBlock, /wakeDragSession\.fullscreenOffline/);
+  assert.match(moveBlock, /fullscreenWakePosition =/);
+  assert.match(moveBlock, /applyFullscreenWakePosition\(\)/);
+
+  const endBlock = functionBlock('endWakeDrag', 'handleWakeClick');
+  assert.match(endBlock, /const fullscreenOffline = wakeDragSession\.fullscreenOffline/);
+  assert.match(endBlock, /if \(!fullscreenOffline\) \{\s*saveState\(\{ panel: currentPanel \}\)/);
 });
 
 test('the collapsed cat uses a normal click event while dragging suppresses accidental clicks', () => {

@@ -1,6 +1,7 @@
 (() => {
   const BRIDGE_SENDER = 'neko-floating-frame-bridge';
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
+  const HEALTH_GATE_TIMEOUT_MS = 4000;
   const frame = document.getElementById('webui');
 
   let bridgeToken = null;
@@ -43,7 +44,7 @@
     if (data.type === 'NEKO_FLOATING_FRAME_LOAD') {
       parentOrigin = event.origin;
       setColorScheme(data.colorScheme);
-      loadAllowedTarget(data.targetUrl);
+      loadAllowedTarget(data.targetUrl, data.requireOnline === true);
       return;
     }
 
@@ -52,6 +53,14 @@
     }
     if (data.type === 'NEKO_FLOATING_FRAME_RELOAD') {
       reloadWebui();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_CLEAR') {
+      clearWebui();
+      return;
+    }
+    if (data.type === 'NEKO_FLOATING_FRAME_VERIFY') {
+      verifyLoadedTarget(data.targetUrl);
       return;
     }
     if (data.type === 'NEKO_FLOATING_FRAME_COLOR_SCHEME') {
@@ -81,12 +90,27 @@
     } catch {}
   }
 
-  async function loadAllowedTarget(value) {
+  async function loadAllowedTarget(value, requireOnline) {
     const sequence = ++loadSequence;
     try {
       const allowed = await resolveAllowedTarget(value);
       if (sequence !== loadSequence) {
         return;
+      }
+      if (requireOnline) {
+        const health = await checkHealthWithTimeout();
+        if (sequence !== loadSequence) {
+          return;
+        }
+        if (health?.online !== true) {
+          targetUrl = null;
+          targetOrigin = null;
+          frame.src = 'about:blank';
+          postToParent('NEKO_FLOATING_FRAME_OFFLINE', {
+            targetUrl: allowed.toString()
+          });
+          return;
+        }
       }
       targetUrl = allowed.toString();
       targetOrigin = allowed.origin;
@@ -98,6 +122,47 @@
       targetUrl = null;
       targetOrigin = null;
       frame.removeAttribute('src');
+      postToParent('NEKO_FLOATING_FRAME_ERROR', {
+        error: String(error?.message || error || 'Invalid WebUI target')
+      });
+    }
+  }
+
+  async function verifyLoadedTarget(value) {
+    const sequence = ++loadSequence;
+    try {
+      const allowed = await resolveAllowedTarget(value);
+      if (sequence !== loadSequence) {
+        return;
+      }
+      const allowedTarget = allowed.toString();
+      if (targetUrl !== allowedTarget) {
+        loadAllowedTarget(allowedTarget, true);
+        return;
+      }
+      const health = await checkHealthWithTimeout();
+      if (sequence !== loadSequence) {
+        return;
+      }
+      if (health?.online !== true) {
+        targetUrl = null;
+        targetOrigin = null;
+        frame.src = 'about:blank';
+        postToParent('NEKO_FLOATING_FRAME_OFFLINE', {
+          targetUrl: allowedTarget
+        });
+        return;
+      }
+      postToParent('NEKO_FLOATING_FRAME_VERIFIED', {
+        targetUrl: allowedTarget
+      });
+    } catch (error) {
+      if (sequence !== loadSequence) {
+        return;
+      }
+      targetUrl = null;
+      targetOrigin = null;
+      frame.src = 'about:blank';
       postToParent('NEKO_FLOATING_FRAME_ERROR', {
         error: String(error?.message || error || 'Invalid WebUI target')
       });
@@ -145,6 +210,29 @@
         frame.src = targetUrl;
       }
     }, 0);
+  }
+
+  async function checkHealthWithTimeout() {
+    let timeoutId = 0;
+    try {
+      return await Promise.race([
+        chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' }).catch(() => null),
+        new Promise((resolve) => {
+          timeoutId = window.setTimeout(() => resolve(null), HEALTH_GATE_TIMEOUT_MS);
+        })
+      ]);
+    } finally {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  function clearWebui() {
+    loadSequence += 1;
+    targetUrl = null;
+    targetOrigin = null;
+    frame.src = 'about:blank';
   }
 
   function setColorScheme(value) {
