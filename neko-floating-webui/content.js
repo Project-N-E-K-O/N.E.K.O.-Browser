@@ -82,6 +82,7 @@
   let frameBridgeTokenRequest = null;
   let frameBridgeReady = false;
   let frameWebuiReady = false;
+  let healthCheckSequence = 0;
   let embedReady = false;
   let embedConnectSent = false;
   let embedRegions = [];
@@ -1281,16 +1282,25 @@
     if (!offlineEl) {
       return;
     }
+    const sequence = ++healthCheckSequence;
+    const checkedWebuiUrl = webuiUrl;
+    let online = false;
     try {
       const response = await chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' });
-      setOnline(response?.online === true);
-    } catch {
-      setOnline(false);
+      online = response?.online === true;
+    } catch {}
+    if (sequence !== healthCheckSequence || checkedWebuiUrl !== webuiUrl) {
+      return;
     }
+    setOnline(online);
   }
 
   function setOnline(online) {
     updateOfflineMessage();
+    if (online === true || online === false) {
+      // A bridge load/error is more recent than any health request that is still pending.
+      healthCheckSequence += 1;
+    }
     if (online === true) {
       setFullscreenOfflineFallback(false);
     } else if (online === false) {
@@ -1617,11 +1627,7 @@
       event.preventDefault();
       event.stopPropagation();
       setOnline(null);
-      if (frameBridgeReady) {
-        loadWebuiThroughFrameBridge();
-      } else {
-        ensureFrameLoaded();
-      }
+      retryFullscreenWebui();
       return;
     }
     if (
@@ -1687,6 +1693,28 @@
     resetFrameBridgeState();
     try { frame.src = 'about:blank'; } catch {}
     frame.src = FRAME_BRIDGE_URL;
+  }
+
+  function retryFullscreenWebui() {
+    if (frameBridgeReady && frameBridgeToken) {
+      if (!loadWebuiThroughFrameBridge()) {
+        reloadFrameBridge();
+      }
+      return;
+    }
+    ensureFrameBridgeToken()
+      .then(() => {
+        if (frameBridgeReady) {
+          if (!loadWebuiThroughFrameBridge()) {
+            reloadFrameBridge();
+          }
+          return;
+        }
+        reloadFrameBridge();
+      })
+      .catch(() => {
+        reloadFrameBridge();
+      });
   }
 
   function loadWebuiThroughFrameBridge() {

@@ -248,7 +248,29 @@ test('fullscreen offline fallback is transient and retries through the bridge', 
 
   const clickBlock = functionBlock('handleWakeClick', 'closePanel');
   assert.match(clickBlock, /panel\?\.dataset\.fullscreenOffline === 'true'/);
-  assert.match(clickBlock, /loadWebuiThroughFrameBridge\(\)/);
+  assert.match(clickBlock, /retryFullscreenWebui\(\)/);
+});
+
+test('stale health responses cannot clear a newer fullscreen load', () => {
+  const healthBlock = functionBlock('checkHealth', 'setOnline');
+  assert.match(healthBlock, /const sequence = \+\+healthCheckSequence/);
+  assert.match(healthBlock, /const checkedWebuiUrl = webuiUrl/);
+  assert.match(healthBlock, /sequence !== healthCheckSequence/);
+  assert.match(healthBlock, /checkedWebuiUrl !== webuiUrl/);
+  assert.ok(
+    healthBlock.indexOf('sequence !== healthCheckSequence') < healthBlock.indexOf('setOnline(online)'),
+    'stale response checks must run before applying connectivity state'
+  );
+  const onlineBlock = functionBlock('setOnline', 'setFullscreenOfflineFallback');
+  assert.match(onlineBlock, /healthCheckSequence \+= 1/);
+});
+
+test('the fullscreen wake fallback rebuilds an unready bridge before retrying', () => {
+  const retryBlock = functionBlock('retryFullscreenWebui', 'loadWebuiThroughFrameBridge');
+  assert.match(retryBlock, /frameBridgeReady && frameBridgeToken/);
+  assert.match(retryBlock, /ensureFrameBridgeToken\(\)/);
+  assert.match(retryBlock, /reloadFrameBridge\(\)/);
+  assert.match(retryBlock, /loadWebuiThroughFrameBridge\(\)/);
 });
 
 test('the collapsed cat uses a normal click event while dragging suppresses accidental clicks', () => {
