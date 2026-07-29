@@ -273,6 +273,21 @@ test('the fullscreen wake fallback rebuilds an unready bridge before retrying', 
   assert.match(retryBlock, /loadWebuiThroughFrameBridge\(\)/);
 });
 
+test('dragging the fullscreen offline wake cat does not overwrite floating panel position', () => {
+  const startBlock = functionBlock('startWakeDrag', 'moveWakeDrag');
+  assert.match(startBlock, /fullscreenWakePosition\?\.right/);
+  assert.match(startBlock, /fullscreenOffline: fullscreenOfflineWake/);
+
+  const moveBlock = functionBlock('moveWakeDrag', 'endWakeDrag');
+  assert.match(moveBlock, /wakeDragSession\.fullscreenOffline/);
+  assert.match(moveBlock, /fullscreenWakePosition =/);
+  assert.match(moveBlock, /applyFullscreenWakePosition\(\)/);
+
+  const endBlock = functionBlock('endWakeDrag', 'handleWakeClick');
+  assert.match(endBlock, /const fullscreenOffline = wakeDragSession\.fullscreenOffline/);
+  assert.match(endBlock, /if \(!fullscreenOffline\) \{\s*saveState\(\{ panel: currentPanel \}\)/);
+});
+
 test('the collapsed cat uses a normal click event while dragging suppresses accidental clicks', () => {
   assert.match(source, /wakeButton\.addEventListener\('click', handleWakeClick\)/);
   const clickBlock = functionBlock('handleWakeClick', 'closePanel');

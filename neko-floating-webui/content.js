@@ -73,6 +73,7 @@
   let dragSession = null;
   let resizeSession = null;
   let wakeDragSession = null;
+  let fullscreenWakePosition = null;
   let suppressWakeClick = false;
   let suppressWakeClickTimer = 0;
 
@@ -251,6 +252,17 @@
       return;
     }
     if (displayMode === 'fullscreen') {
+      if (panel.dataset.fullscreenOffline === 'true' && fullscreenWakePosition) {
+        const clampedPosition = clampMinimizedPanelPosition({
+          ...currentPanel,
+          ...fullscreenWakePosition
+        });
+        fullscreenWakePosition = {
+          right: clampedPosition.right,
+          bottom: clampedPosition.bottom
+        };
+        applyFullscreenWakePosition();
+      }
       return;
     }
     const rect = panel.getBoundingClientRect();
@@ -353,6 +365,7 @@
     chatSurfaceMode = normalizeChatSurfaceMode(state.chatSurfaceMode);
     panel.dataset.displayMode = displayMode;
     panel.dataset.fullscreenOffline = 'false';
+    fullscreenWakePosition = null;
     panel.hidden = false;
     applyPanelStyles(panel, currentPanel);
   }
@@ -1327,10 +1340,20 @@
     const shouldShow = active === true
       && displayMode === 'fullscreen'
       && panel.dataset.minimized === 'false';
+    const wasShown = panel.dataset.fullscreenOffline === 'true';
     panel.dataset.fullscreenOffline = String(shouldShow);
     if (!shouldShow) {
+      fullscreenWakePosition = null;
       return;
     }
+    if (!wasShown || !fullscreenWakePosition) {
+      const initialPosition = clampMinimizedPanelPosition(currentPanel);
+      fullscreenWakePosition = {
+        right: initialPosition.right,
+        bottom: initialPosition.bottom
+      };
+    }
+    applyFullscreenWakePosition();
     frameWebuiReady = false;
     resetEmbedPassthrough('fullscreen-offline');
     stopAllPcmRelays();
@@ -1554,8 +1577,13 @@
       pointerId: event.pointerId,
       startX: getPointerScreenX(event),
       startY: getPointerScreenY(event),
-      startRight: currentPanel.right,
-      startBottom: currentPanel.bottom,
+      startRight: fullscreenOfflineWake
+        ? fullscreenWakePosition?.right ?? currentPanel.right
+        : currentPanel.right,
+      startBottom: fullscreenOfflineWake
+        ? fullscreenWakePosition?.bottom ?? currentPanel.bottom
+        : currentPanel.bottom,
+      fullscreenOffline: fullscreenOfflineWake,
       moved: false
     };
     panel.dataset.wakeDragging = 'true';
@@ -1577,12 +1605,21 @@
     }
     wakeDragSession.moved = true;
 
-    currentPanel = clampMinimizedPanelPosition({
+    const nextPosition = clampMinimizedPanelPosition({
       ...currentPanel,
       right: wakeDragSession.startRight - deltaX,
       bottom: wakeDragSession.startBottom - deltaY
     });
-    applyPanelStyles(panel, currentPanel);
+    if (wakeDragSession.fullscreenOffline) {
+      fullscreenWakePosition = {
+        right: nextPosition.right,
+        bottom: nextPosition.bottom
+      };
+      applyFullscreenWakePosition();
+    } else {
+      currentPanel = nextPosition;
+      applyPanelStyles(panel, currentPanel);
+    }
   }
 
   function endWakeDrag(event) {
@@ -1590,6 +1627,7 @@
       return;
     }
     const moved = wakeDragSession.moved;
+    const fullscreenOffline = wakeDragSession.fullscreenOffline;
     wakeDragSession = null;
     if (panel) {
       delete panel.dataset.wakeDragging;
@@ -1600,7 +1638,9 @@
     if (moved) {
       event.preventDefault();
       event.stopPropagation();
-      saveState({ panel: currentPanel });
+      if (!fullscreenOffline) {
+        saveState({ panel: currentPanel });
+      }
       suppressWakeClick = true;
       suppressWakeClickTimer = window.setTimeout(() => {
         suppressWakeClick = false;
@@ -2305,6 +2345,14 @@
     target.style.height = `${nextPanel.height}px`;
     target.style.right = `${nextPanel.right}px`;
     target.style.bottom = `${nextPanel.bottom}px`;
+  }
+
+  function applyFullscreenWakePosition() {
+    if (!panel || !fullscreenWakePosition) {
+      return;
+    }
+    panel.style.setProperty('--neko-wake-right', `${fullscreenWakePosition.right}px`);
+    panel.style.setProperty('--neko-wake-bottom', `${fullscreenWakePosition.bottom}px`);
   }
 
   function normalizePanel(nextPanel) {
