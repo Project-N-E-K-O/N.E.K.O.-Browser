@@ -265,6 +265,18 @@ test('stale health responses cannot clear a newer fullscreen load', () => {
   assert.match(onlineBlock, /healthCheckSequence \+= 1/);
 });
 
+test('panel lifecycle changes invalidate health checks from older panel instances', () => {
+  const showBlock = functionBlock('showPanelShell', 'applyDisplayMode');
+  assert.match(showBlock, /healthCheckSequence \+= 1/);
+
+  const closeBlock = functionBlock('closePanel', 'getFrameTargetUrl');
+  assert.match(closeBlock, /healthCheckSequence \+= 1/);
+  assert.ok(
+    closeBlock.indexOf('healthCheckSequence += 1') < closeBlock.indexOf("resetEmbedPassthrough('panel-close')"),
+    'pending checks must be invalidated before the old panel is torn down'
+  );
+});
+
 test('the fullscreen wake fallback rebuilds an unready bridge before retrying', () => {
   const retryBlock = functionBlock('retryFullscreenWebui', 'loadWebuiThroughFrameBridge');
   assert.match(retryBlock, /frameBridgeReady && frameBridgeToken/);

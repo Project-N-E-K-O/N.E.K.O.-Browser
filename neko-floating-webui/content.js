@@ -352,6 +352,7 @@
   }
 
   function showPanelShell(state) {
+    healthCheckSequence += 1;
     ensurePanel();
     currentPanel = normalizePanel({
       ...DEFAULT_STATE.panel,
@@ -1679,6 +1680,7 @@
   }
 
   function closePanel() {
+    healthCheckSequence += 1;
     resetEmbedPassthrough('panel-close');
     unloadFrame();
     stopAllPcmRelays();
