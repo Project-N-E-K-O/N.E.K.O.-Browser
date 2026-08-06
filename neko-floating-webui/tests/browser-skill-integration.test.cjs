@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
+const projectRoot = path.resolve(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
 const manifest = JSON.parse(read('src/manifest-base.json'));
 const content = read('content.js');
 const popupHtml = read('popup.html');
@@ -81,5 +82,5 @@ test('daemon endpoint drives both the runtime constant and extension CSP', () =>
 test('production bundle includes the repository third-party notice', () => {
   assert.match(wxtConfig, /fileName: "THIRD_PARTY_NOTICES\.md"/);
   assert.match(wxtConfig, /resolve\(here, "\.\.\/THIRD_PARTY_NOTICES\.md"\)/);
-  assert.ok(fs.existsSync(path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md')));
+  assert.ok(fs.existsSync(path.join(projectRoot, '..', 'THIRD_PARTY_NOTICES.md')));
 });

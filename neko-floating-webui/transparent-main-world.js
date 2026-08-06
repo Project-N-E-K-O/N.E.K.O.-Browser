@@ -45,7 +45,7 @@
     if (!event.data || typeof event.data.type !== 'string') {
       return;
     }
-    if (!event.data.type.startsWith('NEKO_MEDIA_') && !event.data.type.startsWith('NEKO_PCM_')) {
+    if (!event.data.type.startsWith('NEKO_PCM_')) {
       return;
     }
     if (event.data.type === 'NEKO_PCM_PORT') {
@@ -60,11 +60,7 @@
     if (!fromIsolated && !fromFloating) {
       return;
     }
-    if (event.data.type.startsWith('NEKO_PCM_')) {
-      handlePcmRelayMessage(event.data);
-    } else {
-      handleIsolatedMessage(event.data);
-    }
+    handlePcmRelayMessage(event.data);
   });
 
   let ticks = 0;
@@ -118,7 +114,6 @@
     Live2DManager.prototype.__nekoFloatingTransparentPatched = true;
   }
 
-  const pendingRequests = new Map();
   const pcmRelayRequests = new Map();
   const trackedAudioContexts = new Set();
   let floatingPcmPort = null;
@@ -419,168 +414,8 @@
     entry.idleTimer = window.setTimeout(checkIdle, 3500);
   }
 
-  async function relayAudioViaWebRTC(constraints) {
-    const requestId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random());
-    const pc = new RTCPeerConnection();
-    let resolvePromise;
-    let rejectPromise;
-    const streamPromise = new Promise((resolve, reject) => {
-      resolvePromise = resolve;
-      rejectPromise = reject;
-    });
-    const entry = {
-      pc,
-      resolve: resolvePromise,
-      reject: rejectPromise,
-      setupTimer: null,
-      pendingIce: [],
-      remoteDescriptionSet: false,
-      resolved: false
-    };
-    pendingRequests.set(requestId, entry);
-
-    pc.addTransceiver('audio', { direction: 'recvonly' });
-
-    pc.ontrack = (event) => {
-      const stream = event.streams[0] || new MediaStream([event.track]);
-      const track = event.track;
-      console.log('[NEKO-MIC main] ontrack:', event.track.kind, 'readyState:', event.track.readyState, 'muted:', event.track.muted, 'enabled:', event.track.enabled);
-      console.log('[NEKO-MIC main] Received track settings:', event.track.getSettings());
-      track.onmute = () => console.log('[NEKO-MIC main] track muted', requestId.substring(0, 8));
-      track.onended = () => cleanupRequest(requestId);
-      waitForTrackUnmuted(track, requestId)
-        .then(() => resolveRequest(requestId, stream))
-        .catch((err) => rejectRequest(requestId, err));
-    };
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        postToIsolated({ type: 'NEKO_MEDIA_SIGNAL', requestId, ice: event.candidate.toJSON() });
-      }
-    };
-    pc.oniceconnectionstatechange = () => {
-      console.log('[NEKO-MIC main] ICE state:', pc.iceConnectionState);
-    };
-    pc.onicegatheringstatechange = () => {
-      console.log('[NEKO-MIC main] ICE gathering state:', pc.iceGatheringState);
-    };
-    pc.onconnectionstatechange = () => {
-      console.log('[NEKO-MIC main] PC state:', pc.connectionState);
-      if (['closed', 'failed'].includes(pc.connectionState)) {
-        rejectRequest(requestId, new DOMException('WebRTC connection ' + pc.connectionState, 'NetworkError'));
-      }
-    };
-
-    entry.setupTimer = window.setTimeout(() => {
-      if (!entry.resolved) {
-        rejectRequest(requestId, new DOMException('Mic relay timeout', 'TimeoutError'));
-      }
-    }, 10000);
-
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await waitForIceGatheringComplete(pc, 1500);
-      console.log('[NEKO-MIC main] Sent offer');
-      postToIsolated({ type: 'NEKO_MEDIA_REQUEST', requestId, constraints, sdp: pc.localDescription.toJSON() });
-      monitorInboundRtp(pc);
-    } catch (err) {
-      rejectRequest(requestId, err);
-    }
-
-    return streamPromise;
-  }
-
-  function monitorInboundRtp(pc) {
-    let lastPacketsReceived = 0;
-    let lastAudioEnergy = 0;
-    const intervalId = setInterval(async () => {
-      try {
-        const stats = await pc.getStats();
-        stats.forEach((report) => {
-          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-            const deltaPackets = Number(report.packetsReceived || 0) - lastPacketsReceived;
-            const audioEnergy = Number(report.totalAudioEnergy || 0);
-            const deltaEnergy = audioEnergy - lastAudioEnergy;
-            lastPacketsReceived = Number(report.packetsReceived || 0);
-            lastAudioEnergy = audioEnergy;
-            console.log('[NEKO-MIC main] Inbound RTP packetsReceived:', report.packetsReceived, 'delta:', deltaPackets, 'bytesReceived:', report.bytesReceived, 'audioLevel:', report.audioLevel, 'deltaEnergy:', deltaEnergy);
-          }
-        });
-      } catch {}
-    }, 1000);
-    setTimeout(() => clearInterval(intervalId), 15000);
-  }
-
-  function waitForTrackUnmuted(track, requestId) {
-    if (!track.muted) {
-      console.log('[NEKO-MIC main] track already unmuted', requestId.substring(0, 8));
-      return Promise.resolve();
-    }
-
-    console.log('[NEKO-MIC main] Waiting for track unmute', requestId.substring(0, 8));
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const cleanup = () => {
-        track.removeEventListener('unmute', onUnmute);
-        track.removeEventListener('ended', onEnded);
-        clearTimeout(timer);
-      };
-      const finish = () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        console.log('[NEKO-MIC main] track unmuted', requestId.substring(0, 8));
-        scheduleAudioContextResumes();
-        resolve();
-      };
-      const fail = (err) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        cleanup();
-        reject(err);
-      };
-      const onUnmute = () => finish();
-      const onEnded = () => fail(new DOMException('Mic relay track ended before audio started', 'AbortError'));
-      const timer = setTimeout(() => {
-        fail(new DOMException('Mic relay track stayed muted', 'TimeoutError'));
-      }, 6000);
-      track.addEventListener('unmute', onUnmute, { once: true });
-      track.addEventListener('ended', onEnded, { once: true });
-    });
-  }
-
-  function waitForIceGatheringComplete(pc, timeoutMs) {
-    if (pc.iceGatheringState === 'complete') {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        pc.removeEventListener('icegatheringstatechange', onStateChange);
-        resolve();
-      };
-      const onStateChange = () => {
-        if (pc.iceGatheringState === 'complete') {
-          finish();
-        }
-      };
-      const timer = setTimeout(finish, timeoutMs);
-      pc.addEventListener('icegatheringstatechange', onStateChange);
-    });
-  }
-
   function postToIsolated(data) {
-    if (data.type && data.type.startsWith('NEKO_PCM_') && window.parent && window.parent !== window) {
+    if (window.parent && window.parent !== window) {
       if (floatingPcmPort) {
         try {
           floatingPcmPort.postMessage({ ...data, _sender: 'main' });
@@ -612,90 +447,6 @@
     };
     try { floatingPcmPort.start(); } catch {}
     console.log('[NEKO-MIC main] PCM MessagePort attached');
-  }
-
-  function handleIsolatedMessage(data) {
-    const entry = pendingRequests.get(data.requestId);
-    if (!entry) {
-      return;
-    }
-    if (data.error) {
-      rejectRequest(data.requestId, new DOMException(data.error.message || 'Mic relay error', data.error.name || 'UnknownError'));
-      return;
-    }
-    if (data.sdp) {
-      if (entry.pc.signalingState !== 'have-local-offer') {
-        console.warn('[NEKO-MIC main] Ignored SDP in signalingState:', entry.pc.signalingState, data.requestId?.substring?.(0, 8));
-        return;
-      }
-      entry.pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
-        .then(() => {
-          entry.remoteDescriptionSet = true;
-          flushPendingIce(entry);
-        })
-        .catch((err) => {
-          rejectRequest(data.requestId, err);
-        });
-      return;
-    }
-    if (data.ice) {
-      addIceCandidateSafe(entry, data.ice);
-    }
-  }
-
-  function addIceCandidateSafe(entry, ice) {
-    if (!entry || !ice) {
-      return;
-    }
-    if (!entry.remoteDescriptionSet && !entry.pc.remoteDescription) {
-      entry.pendingIce.push(ice);
-      return;
-    }
-    entry.pc.addIceCandidate(new RTCIceCandidate(ice)).catch((err) => {
-      console.warn('[NEKO-MIC main] addIceCandidate failed:', err);
-    });
-  }
-
-  function flushPendingIce(entry) {
-    const pendingIce = entry.pendingIce.splice(0);
-    pendingIce.forEach((ice) => addIceCandidateSafe(entry, ice));
-  }
-
-  function resolveRequest(requestId, stream) {
-    const entry = pendingRequests.get(requestId);
-    if (!entry || entry.resolved) {
-      return;
-    }
-    entry.resolved = true;
-    window.clearTimeout(entry.setupTimer);
-    monitorReceivedAudio(stream, requestId);
-    scheduleAudioContextResumes();
-    entry.resolve(stream);
-  }
-
-  function rejectRequest(requestId, err) {
-    const entry = pendingRequests.get(requestId);
-    if (!entry) {
-      return;
-    }
-    if (entry.resolved) {
-      cleanupRequest(requestId);
-      return;
-    }
-    window.clearTimeout(entry.setupTimer);
-    try { entry.pc.close(); } catch {}
-    pendingRequests.delete(requestId);
-    entry.reject(err);
-  }
-
-  function cleanupRequest(requestId) {
-    const entry = pendingRequests.get(requestId);
-    if (!entry) {
-      return;
-    }
-    window.clearTimeout(entry.setupTimer);
-    try { entry.pc.close(); } catch {}
-    pendingRequests.delete(requestId);
   }
 
   function monitorReceivedAudio(stream, requestId) {

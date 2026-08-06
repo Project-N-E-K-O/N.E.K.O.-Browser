@@ -30,7 +30,6 @@ const DEFAULT_STATE = {
 };
 
 const mediaRoutes = new Map();
-const pendingOffscreenSignals = new Map();
 let offscreenEnsurePromise = null;
 const OFFSCREEN_PING_TIMEOUT_MS = 1000;
 const OFFSCREEN_MESSAGE_TIMEOUT_MS = 3000;
@@ -384,22 +383,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'NEKO_MEDIA_REQUEST') {
-    handleMediaRequest(message, sender)
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message.type === 'NEKO_MEDIA_SIGNAL') {
-    if (sender.tab) {
-      forwardToOffscreen(message).catch(() => {});
-    } else {
-      routeSignalToContent(message);
-    }
-    return false;
-  }
-
   if (message.type === 'NEKO_PCM_START') {
     handlePcmStart(message, sender)
       .then(() => sendResponse({ ok: true }))
@@ -716,15 +699,6 @@ async function ensureContentScript(tabId) {
 
   const secondPing = await sendTabMessage(tabId, { type: 'NEKO_PING' });
   return Boolean(secondPing?.ok);
-}
-
-async function closeTabPanel(tabId) {
-  await sendTabMessage(tabId, { type: 'NEKO_FORCE_CLOSE' });
-  await chrome.storage.local.set({
-    activeTabId: null,
-    enabled: false,
-    fullscreenFromCollapsedFloating: false
-  });
 }
 
 async function minimizeTabPanel(tabId) {
@@ -1142,21 +1116,6 @@ async function performHealthCheck() {
   }
 }
 
-async function handleMediaRequest(message, sender) {
-  if (!sender.tab?.id) {
-    return;
-  }
-  mediaRoutes.set(message.requestId, { tabId: sender.tab.id, frameId: sender.frameId });
-  await ensureOffscreen();
-  await sendOffscreenMessage({
-    type: 'NEKO_MEDIA_REQUEST',
-    requestId: message.requestId,
-    constraints: message.constraints,
-    sdp: message.sdp
-  });
-  await flushPendingOffscreenSignals(message.requestId);
-}
-
 async function handlePcmStart(message, sender) {
   if (message.fromFloating) {
     mediaRoutes.set(message.requestId, { extensionPage: true, tabId: sender.tab?.id, frameId: sender.frameId });
@@ -1192,24 +1151,6 @@ async function handlePcmStop(message) {
   mediaRoutes.delete(message.requestId);
 }
 
-async function forwardToOffscreen(message) {
-  if (!message.requestId || !message.ice) {
-    return;
-  }
-  const signal = {
-    type: 'NEKO_MEDIA_SIGNAL',
-    requestId: message.requestId,
-    ice: message.ice
-  };
-
-  try {
-    await ensureOffscreen();
-    await sendOffscreenMessage(signal);
-  } catch {
-    queuePendingOffscreenSignal(signal);
-  }
-}
-
 function routeSignalToContent(message) {
   const route = mediaRoutes.get(message.requestId);
   if (!route) {
@@ -1236,33 +1177,12 @@ function routeSignalToContent(message) {
   chrome.tabs.sendMessage(route.tabId, {
     type: message.type,
     requestId: message.requestId,
-    sdp: message.sdp,
-    ice: message.ice,
     error: message.error,
     ready: message.ready,
     pcm16: message.pcm16,
     sampleRate: message.sampleRate,
     level: message.level
   }, { frameId: route.frameId }).catch(() => {});
-}
-
-function queuePendingOffscreenSignal(signal) {
-  const existing = pendingOffscreenSignals.get(signal.requestId) || [];
-  existing.push(signal);
-  pendingOffscreenSignals.set(signal.requestId, existing);
-}
-
-async function flushPendingOffscreenSignals(requestId) {
-  const signals = pendingOffscreenSignals.get(requestId) || [];
-  pendingOffscreenSignals.delete(requestId);
-
-  for (const signal of signals) {
-    try {
-      await sendOffscreenMessage(signal);
-    } catch {
-      queuePendingOffscreenSignal(signal);
-    }
-  }
 }
 
 async function ensureOffscreen() {
@@ -1306,8 +1226,8 @@ async function createOffscreenDocument() {
   try {
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
-      reasons: ['USER_MEDIA', 'WEB_RTC'],
-      justification: 'Hold microphone MediaStream once and relay to N.E.K.O WebUI via WebRTC.'
+      reasons: ['USER_MEDIA'],
+      justification: 'Capture microphone audio and relay PCM samples to N.E.K.O WebUI.'
     });
   } catch (e) {
     if (!/single offscreen/i.test(String(e?.message || e))) {

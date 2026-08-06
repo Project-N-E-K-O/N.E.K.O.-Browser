@@ -17,6 +17,7 @@
   "include": [
     "./src/**/*.ts",
     "./src/**/*.d.ts",
+    "./tests/**/*.ts",
     "./wxt.config.ts",
     "./vendor/browser-skill/apps/extension/src/entrypoints/background.ts",
     "./vendor/browser-skill/apps/extension/src/entrypoints/content.ts",

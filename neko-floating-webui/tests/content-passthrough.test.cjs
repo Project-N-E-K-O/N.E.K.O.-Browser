@@ -3,8 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const source = fs.readFileSync(path.join(__dirname, 'content.js'), 'utf8');
-const background = fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8');
+const projectRoot = path.resolve(__dirname, '..');
+const source = fs.readFileSync(path.join(projectRoot, 'content.js'), 'utf8');
+const background = fs.readFileSync(path.join(projectRoot, 'background.js'), 'utf8');
 
 function functionBlock(name, nextName) {
   const start = source.indexOf(`function ${name}`);

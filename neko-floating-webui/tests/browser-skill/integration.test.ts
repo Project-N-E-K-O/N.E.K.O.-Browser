@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { WSTransport } from "@/transport/ws-transport";
 import type { ProtocolFrame } from "@/transport/types";
-import { installBrowserSkillIntegration } from "./integration";
+import { installBrowserSkillIntegration } from "../../src/browser-skill/integration";
 
 type SocketEvent = "open" | "message" | "close" | "error";
 

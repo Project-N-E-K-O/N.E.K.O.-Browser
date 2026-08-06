@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   adaptBrowserSkillVomCapture,
   NEKO_OBSERVATION_IGNORE_ATTRIBUTE,
-} from "./vom-adapter";
+} from "../../src/browser-skill/vom-adapter";
 
 describe("BrowserSkill VOM adapter", () => {
   it("excludes N.E.K.O in both DOMSnapshot and fallback capture paths", () => {

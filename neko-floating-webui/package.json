@@ -9,7 +9,7 @@
     "build": "wxt build",
     "compile": "wxt prepare && tsc --noEmit",
     "test": "pnpm test:neko && pnpm test:integration",
-    "test:neko": "node test-neko.cjs",
+    "test:neko": "node tests/test-neko.cjs",
     "test:integration": "vitest run",
     "postinstall": "wxt prepare"
   },
@@ -27,7 +27,6 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@wxt-dev/module-react": "^1.1.3",
-    "happy-dom": "^15.11.7",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.6",

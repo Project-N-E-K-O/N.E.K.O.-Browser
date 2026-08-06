@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
+const projectRoot = path.resolve(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
 const sidepanelHtml = read('sidepanel.html');
 const sidepanel = read('sidepanel.js');
 const css = read('sidepanel.css');

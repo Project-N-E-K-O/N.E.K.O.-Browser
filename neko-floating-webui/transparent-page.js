@@ -289,7 +289,7 @@
     if (data._sender !== 'main') {
       return;
     }
-    if (data.type === 'NEKO_MEDIA_REQUEST' || data.type === 'NEKO_MEDIA_SIGNAL' || data.type === 'NEKO_PCM_START' || data.type === 'NEKO_PCM_STOP') {
+    if (data.type === 'NEKO_PCM_START' || data.type === 'NEKO_PCM_STOP') {
       if (data.type === 'NEKO_PCM_START') {
         window.postMessage({
           type: 'NEKO_PCM_BRIDGE_ACK',
@@ -301,8 +301,6 @@
         type: data.type,
         requestId: data.requestId,
         constraints: data.constraints,
-        sdp: data.sdp,
-        ice: data.ice,
         sampleRate: data.sampleRate
       };
       chrome.runtime.sendMessage(payload)
@@ -321,9 +319,8 @@
     if (!source || !source.requestId || source.type === 'NEKO_PCM_STOP') {
       return;
     }
-    const isPcm = source.type.startsWith('NEKO_PCM_');
     window.postMessage({
-      type: isPcm ? 'NEKO_PCM_SIGNAL' : 'NEKO_MEDIA_SIGNAL',
+      type: 'NEKO_PCM_SIGNAL',
       requestId: source.requestId,
       error: normalizeBridgeError(err),
       _sender: 'isolated'
@@ -346,16 +343,6 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== 'string') {
       return false;
-    }
-    if (message.type === 'NEKO_MEDIA_SIGNAL') {
-      window.postMessage({
-        type: 'NEKO_MEDIA_SIGNAL',
-        requestId: message.requestId,
-        sdp: message.sdp,
-        ice: message.ice,
-        error: message.error,
-        _sender: 'isolated'
-      }, window.location.origin);
     }
     if (message.type === 'NEKO_PCM_SIGNAL' || message.type === 'NEKO_PCM_CHUNK') {
       window.postMessage({

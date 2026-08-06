@@ -4,7 +4,8 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
+const projectRoot = path.resolve(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
 const manifest = JSON.parse(read('src/manifest-base.json'));
 const adapter = read('embedded-surface-main-world.js');
 const css = read('embedded-surface.css');
