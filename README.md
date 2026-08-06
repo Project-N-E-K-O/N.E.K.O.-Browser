@@ -11,7 +11,8 @@ N.E.K.O Browser 是一个统一构建的 Chrome/Edge MV3 扩展。它可以用�
 ### 环境要求
 
 - Chrome 142 或更高版本，或支持完整 `chrome.sidePanel` API 的 Microsoft Edge。
-- Node.js、`pnpm 10.17.0`。
+- Node.js 20.12.0 或更高版本、`pnpm 10.17.0`。
+- 构建使用项目内安装的 WXT 0.20.27，无需全局安装 WXT。
 - 可正常访问的 N.E.K.O WebUI。
 - BrowserSkill `bsk 0.1.9` daemon。
 
@@ -75,9 +76,11 @@ popup 中还可以：
 ```powershell
 & $Bsk status
 & $Bsk session start
-& $Bsk snapshot
-& $Bsk screenshot
-& $Bsk session stop
+# 记下上一条命令输出的 4 位 session ID，例如 ab12
+$SessionId = 'ab12'
+& $Bsk snapshot --session $SessionId
+& $Bsk screenshot --session $SessionId
+& $Bsk session stop $SessionId
 ```
 
 录制示例：
@@ -134,6 +137,15 @@ neko-floating-webui/
 ├─ wxt.config.ts            统一构建配置
 └─ dist/chrome-mv3/         构建产物，不提交
 ```
+
+### WXT 构建架构
+
+当前锁文件使用 WXT 0.20.27。WXT 是项目的本地开发依赖，由 `pnpm install` 自动安装，主要负责：
+
+- 根据 `src/manifest-base.json` 和 `wxt.config.ts` 生成 Chrome MV3 manifest。
+- 从 `src/entrypoints` 打包统一的 background 与 content script 入口。
+- 将 N.E.K.O 运行时资源、BrowserSkill 源码和第三方声明输出到 `dist/chrome-mv3`。
+- 在 `.wxt` 中生成开发和类型检查所需的临时文件；该目录不应提交。
 
 WXT background 会依次安装集成 adapter、初始化 N.E.K.O 后台，再启动 BrowserSkill background。BrowserSkill 源码通过别名参与统一构建，不需要另外加载 BrowserSkill 扩展。popup 使用 `bsk-popup` runtime port 连接 BrowserSkill 后台。
 
