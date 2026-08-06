@@ -84,9 +84,17 @@ describe("BrowserSkill automation lease integration", () => {
     expect(received).toHaveLength(1);
 
     socket.inbound({ id: "capture-1", method: "tool.screenshot", params: {} });
+    socket.inbound({ id: "cancel-1", method: "cancel", params: { rpc_id: "capture-1" } });
 
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(received).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(750);
-    expect(received).toHaveLength(2);
+    expect(received.map((frame) => ("id" in frame ? frame.id : undefined))).toEqual([
+      "record-1",
+      "capture-1",
+      "cancel-1",
+    ]);
     const activationCalls = sendMessage.mock.calls.filter(
       ([, message]) => message.type === "NEKO_AUTOMATION_LEASE" && message.active === true,
     );
@@ -123,7 +131,7 @@ describe("BrowserSkill automation lease integration", () => {
     expect(JSON.parse(socket.sent[0])).toEqual({ id: "capture-1", result: { data: "png" } });
 
     socket.inbound({ id: "click-1", method: "tool.click", params: { x: 100, y: 80 } });
-    await vi.waitFor(() => expect(received).toHaveLength(3));
+    await vi.waitFor(() => expect(received).toHaveLength(4));
     expect(sendMessage).toHaveBeenCalledWith(11, {
       type: "NEKO_AUTOMATION_LEASE",
       leaseId: "bsk-click:click-1",

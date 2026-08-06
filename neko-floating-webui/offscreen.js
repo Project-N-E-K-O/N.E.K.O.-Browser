@@ -8,6 +8,7 @@
   const PCM_CONTEXT_RESUME_TIMEOUT_MS = 1200;
   const MIC_RELEASE_DELAY_MS = 500;
   let micReleaseTimer = null;
+  let micStreamPromise = null;
 
   console.log('[NEKO-MIC offscreen] ready');
 
@@ -51,52 +52,66 @@
     cleanupPcmSession(requestId);
     console.log('[NEKO-MIC offscreen] PCM start requested:', requestId.substring(0, 8));
 
-    const stream = await ensureMicStream(constraints);
-    const sampleRate = Number(requestedSampleRate) || 48000;
-    const audioContext = new AudioContext({ sampleRate });
-    const source = audioContext.createMediaStreamSource(stream);
-    const silence = audioContext.createGain();
-    silence.gain.value = 0;
-
     const session = {
       requestId,
-      audioContext,
-      source,
+      audioContext: null,
+      source: null,
       processor: null,
-      silence,
+      silence: null,
       closed: false,
       captureMode: 'unknown'
     };
     pcmSessions.set(requestId, session);
 
-    let processor;
     try {
-      processor = await createPcmProcessor(audioContext, session);
+      const stream = await ensureMicStream(constraints);
+      if (!isCurrentPcmSession(session)) {
+        scheduleMicReleaseIfIdle();
+        return;
+      }
+
+      const sampleRate = Number(requestedSampleRate) || 48000;
+      const audioContext = new AudioContext({ sampleRate });
+      const source = audioContext.createMediaStreamSource(stream);
+      const silence = audioContext.createGain();
+      silence.gain.value = 0;
+      session.audioContext = audioContext;
+      session.source = source;
+      session.silence = silence;
+
+      const processor = await createPcmProcessor(audioContext, session);
+      if (!isCurrentPcmSession(session)) {
+        try { processor.disconnect(); } catch {}
+        return;
+      }
+      session.processor = processor;
+
+      source.connect(processor);
+      processor.connect(silence);
+      silence.connect(audioContext.destination);
+
+      if (audioContext.state === 'suspended') {
+        await withTimeout(audioContext.resume(), PCM_CONTEXT_RESUME_TIMEOUT_MS, 'AudioContext resume').catch((err) => {
+          console.warn('[NEKO-MIC offscreen] PCM AudioContext resume did not complete:', formatError(err), 'state:', audioContext.state);
+        });
+      }
+
+      if (!isCurrentPcmSession(session)) {
+        return;
+      }
+      console.log('[NEKO-MIC offscreen] PCM relay started:', requestId.substring(0, 8), 'mode:', session.captureMode, 'sampleRate:', audioContext.sampleRate, 'ctxState:', audioContext.state);
+      sendPcmSignal(requestId, {
+        ready: true,
+        sampleRate: audioContext.sampleRate
+      });
     } catch (err) {
-      cleanupPcmSession(requestId);
+      cleanupPcmSession(requestId, session);
       throw err;
     }
-    if (session.closed) {
-      try { processor.disconnect(); } catch {}
-      return;
-    }
-    session.processor = processor;
+  }
 
-    source.connect(processor);
-    processor.connect(silence);
-    silence.connect(audioContext.destination);
-
-    if (audioContext.state === 'suspended') {
-      await withTimeout(audioContext.resume(), PCM_CONTEXT_RESUME_TIMEOUT_MS, 'AudioContext resume').catch((err) => {
-        console.warn('[NEKO-MIC offscreen] PCM AudioContext resume did not complete:', formatError(err), 'state:', audioContext.state);
-      });
-    }
-
-    console.log('[NEKO-MIC offscreen] PCM relay started:', requestId.substring(0, 8), 'mode:', session.captureMode, 'sampleRate:', audioContext.sampleRate, 'ctxState:', audioContext.state);
-    sendPcmSignal(requestId, {
-      ready: true,
-      sampleRate: audioContext.sampleRate
-    });
+  function isCurrentPcmSession(session) {
+    return !session.closed && pcmSessions.get(session.requestId) === session;
   }
 
   async function createPcmProcessor(audioContext, session) {
@@ -246,9 +261,9 @@
     }).catch(() => {});
   }
 
-  function cleanupPcmSession(requestId) {
+  function cleanupPcmSession(requestId, expectedSession) {
     const session = pcmSessions.get(requestId);
-    if (!session) {
+    if (!session || (expectedSession && session !== expectedSession)) {
       return;
     }
     session.closed = true;
@@ -271,6 +286,10 @@
       return existing;
     }
 
+    if (micStreamPromise) {
+      return micStreamPromise;
+    }
+
     if (existing) {
       existing.getTracks().forEach((t) => {
         try { t.stop(); } catch {}
@@ -280,9 +299,15 @@
 
     const audioConstraints = resolveAudioConstraints(constraints);
     console.log('[NEKO-MIC offscreen] getUserMedia with constraints:', JSON.stringify(audioConstraints));
-    const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-    cachedStreams.set(STREAM_KEY, stream);
-    return stream;
+    micStreamPromise = navigator.mediaDevices.getUserMedia(audioConstraints)
+      .then((stream) => {
+        cachedStreams.set(STREAM_KEY, stream);
+        return stream;
+      })
+      .finally(() => {
+        micStreamPromise = null;
+      });
+    return micStreamPromise;
   }
 
   function resolveAudioConstraints(constraints) {

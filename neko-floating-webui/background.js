@@ -383,22 +383,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'NEKO_PCM_START') {
-    handlePcmStart(message, sender)
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => {
-        const error = normalizeRuntimeError(e);
-        routeSignalToContent({
-          type: 'NEKO_PCM_SIGNAL',
-          requestId: message.requestId,
-          error
-        });
-        sendResponse({ ok: false, error: error.message });
-      });
-    return true;
-  }
-
   if (message.type === 'NEKO_FLOATING_PCM_START') {
+    if (!isTrustedFloatingPcmMessage(message, sender)) {
+      sendResponse({ ok: false, error: 'Rejected untrusted floating PCM request.' });
+      return false;
+    }
     handlePcmStart({
       type: 'NEKO_PCM_START',
       requestId: message.requestId,
@@ -419,12 +408,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'NEKO_PCM_STOP') {
-    handlePcmStop(message).then(() => sendResponse({ ok: true }));
-    return true;
-  }
-
   if (message.type === 'NEKO_FLOATING_PCM_STOP') {
+    if (!isTrustedFloatingPcmMessage(message, sender)) {
+      sendResponse({ ok: false, error: 'Rejected untrusted floating PCM request.' });
+      return false;
+    }
     handlePcmStop({
       type: 'NEKO_PCM_STOP',
       requestId: message.requestId
@@ -433,7 +421,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'NEKO_PCM_SIGNAL' || message.type === 'NEKO_PCM_CHUNK') {
-    routeSignalToContent(message);
+    if (isOffscreenSender(sender)) {
+      routeSignalToContent(message);
+    }
     return false;
   }
 
@@ -1296,5 +1286,17 @@ function withTimeout(promise, timeoutMs, label) {
     }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function isTrustedFloatingPcmMessage(message, sender) {
+  return Number.isInteger(sender?.tab?.id)
+    && sender.frameId === 0
+    && typeof message.requestId === 'string'
+    && message.requestId.length > 0
+    && message.requestId.length <= 128;
+}
+
+function isOffscreenSender(sender) {
+  return sender?.url === chrome.runtime.getURL('offscreen.html') && !sender.tab;
 }
 }

@@ -131,16 +131,6 @@ function releaseAllAutomation(transport: WSTransport): void {
   }
 }
 
-function dispatchAfterReady(
-  ready: Promise<void>,
-  handler: (frame: ProtocolFrame) => void,
-  frame: ProtocolFrame,
-): void {
-  void ready.then(() => handler(frame)).catch((error) => {
-    console.error("[neko/browser-skill] deferred transport handler failed", error);
-  });
-}
-
 export function installBrowserSkillIntegration(): void {
   if (installed) return;
   installed = true;
@@ -154,28 +144,26 @@ export function installBrowserSkillIntegration(): void {
 
   const originalOnMessage = WSTransport.prototype.onMessage;
   WSTransport.prototype.onMessage = function onMessage(handler) {
+    // Keep each subscriber's wire order intact while an automation surface is
+    // being prepared. In particular, a cancel received behind a delayed click
+    // must run only after the click has reached ToolDispatcher and registered
+    // its AbortController.
+    let dispatchTail = Promise.resolve();
     return originalOnMessage.call(this, (frame) => {
+      let ready = Promise.resolve();
       if (isRequestFrame(frame) && frame.method === "tool.screenshot") {
-        dispatchAfterReady(
-          prepareAutomation(this, frame.id, "capture-hide", "screenshot"),
-          handler,
-          frame,
-        );
-        return;
+        ready = prepareAutomation(this, frame.id, "capture-hide", "screenshot");
+      } else if (isRequestFrame(frame) && frame.method === "tool.click") {
+        ready = prepareAutomation(this, frame.id, "pointer-bypass", "click");
+      } else if (isRequestFrame(frame) && frame.method === "tool.record_start") {
+        ready = startupReset;
       }
-      if (isRequestFrame(frame) && frame.method === "tool.click") {
-        dispatchAfterReady(
-          prepareAutomation(this, frame.id, "pointer-bypass", "click"),
-          handler,
-          frame,
-        );
-        return;
-      }
-      if (isRequestFrame(frame) && frame.method === "tool.record_start") {
-        dispatchAfterReady(startupReset, handler, frame);
-        return;
-      }
-      handler(frame);
+      dispatchTail = dispatchTail
+        .then(() => ready)
+        .then(() => handler(frame))
+        .catch((error) => {
+          console.error("[neko/browser-skill] ordered transport handler failed", error);
+        });
     });
   };
 

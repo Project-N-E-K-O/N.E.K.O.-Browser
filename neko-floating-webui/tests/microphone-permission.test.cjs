@@ -10,6 +10,10 @@ const popup = read('popup.js');
 const permissionHtml = read('mic-permission.html');
 const permissionPage = read('mic-permission.js');
 const offscreen = read('offscreen.js');
+const background = read('background.js');
+const content = read('content.js');
+const bridge = read('floating-frame.js');
+const transparentPage = read('transparent-page.js');
 
 test('popup exposes an explicit microphone authorization control', () => {
   assert.match(popupHtml, /id="authorize-microphone"/);
@@ -36,4 +40,17 @@ test('the dedicated page requests permission and releases its probe stream', () 
 test('offscreen capture continues to use the same extension-origin Web permission', () => {
   assert.match(offscreen, /navigator\.mediaDevices\.getUserMedia\(audioConstraints\)/);
   assert.match(offscreen, /cachedStreams\.set\(STREAM_KEY, stream\)/);
+});
+
+test('PCM capture is reachable only through the extension-owned floating frame route', () => {
+  assert.doesNotMatch(transparentPage, /NEKO_PCM_(?:START|STOP|SIGNAL|CHUNK)/);
+  assert.doesNotMatch(background, /message\.type === 'NEKO_PCM_START'/);
+  assert.doesNotMatch(background, /message\.type === 'NEKO_PCM_STOP'/);
+  assert.match(background, /message\.type === 'NEKO_FLOATING_PCM_START'/);
+  assert.match(background, /isTrustedFloatingPcmMessage\(message, sender\)/);
+  assert.match(background, /sender\.frameId === 0/);
+  assert.match(background, /isOffscreenSender\(sender\)/);
+  assert.match(content, /event\.origin !== FRAME_BRIDGE_ORIGIN/);
+  assert.match(bridge, /data\.bridgeToken !== bridgeToken/);
+  assert.match(bridge, /candidate\.origin !== configured\.origin/);
 });
