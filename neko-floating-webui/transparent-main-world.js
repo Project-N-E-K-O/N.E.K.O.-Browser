@@ -238,7 +238,6 @@
       resolve: resolvePromise,
       reject: rejectPromise,
       nextStartTime: 0,
-      chunksReceived: 0,
       resolved: false,
       closed: false,
       lastNonSilentAt: 0,
@@ -315,21 +314,15 @@
       }
       source.start(entry.nextStartTime);
       entry.nextStartTime += buffer.duration;
-      entry.chunksReceived += 1;
-
       if (!entry.resolved) {
         entry.resolved = true;
         window.clearTimeout(entry.setupTimer);
         console.log('[NEKO-MIC main] PCM relay stream resolved', requestId.substring(0, 8), 'ctxState:', entry.audioContext.state);
-        monitorReceivedAudio(entry.stream, requestId);
         armPcmIdleCleanup(requestId, entry);
         scheduleAudioContextResumes();
         entry.resolve(entry.stream);
       }
 
-      if (Number(data.level) > 0.02 && entry.chunksReceived % 20 === 1) {
-        console.log('[NEKO-MIC main] PCM chunk scheduled', requestId.substring(0, 8), 'samples:', samples.length, 'level:', data.level, 'ctxState:', entry.audioContext.state);
-      }
       if (Number(data.level) > 0.015) {
         entry.lastNonSilentAt = performance.now();
       }
@@ -447,42 +440,6 @@
     };
     try { floatingPcmPort.start(); } catch {}
     console.log('[NEKO-MIC main] PCM MessagePort attached');
-  }
-
-  function monitorReceivedAudio(stream, requestId) {
-    try {
-      const shortId = requestId.substring(0, 8);
-      const ctx = new AudioContext();
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
-      }
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let tick = 0;
-      const intervalId = setInterval(() => {
-        resumeAudioContext(ctx);
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / dataArray.length;
-        const max = Math.max.apply(null, Array.from(dataArray));
-        if (max > 0 || tick === 0) {
-          console.log('[NEKO-MIC main] Received audio level avg:', avg.toFixed(2), 'max:', max, 'tick:', tick, 'ctxState:', ctx.state, shortId);
-        }
-        tick++;
-        if (tick > 20) {
-          clearInterval(intervalId);
-          try { ctx.close(); } catch {}
-        }
-      }, 500);
-    } catch (e) {
-      console.warn('[NEKO-MIC main] Received audio monitor failed:', e);
-    }
   }
 
   function scheduleAudioContextResumes() {

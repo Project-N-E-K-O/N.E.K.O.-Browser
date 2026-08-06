@@ -9,7 +9,6 @@
   const MIC_RELEASE_DELAY_MS = 500;
   let micReleaseTimer = null;
 
-  window.setInterval(() => {}, 20000);
   console.log('[NEKO-MIC offscreen] ready');
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -65,7 +64,6 @@
       source,
       processor: null,
       silence,
-      chunksSent: 0,
       closed: false,
       captureMode: 'unknown'
     };
@@ -174,12 +172,6 @@
 
     const level = Number(data.level) || 0;
     const pcm16 = encodePcm16BytesBase64(data.pcm16Buffer);
-    session.chunksSent += 1;
-
-    if (level > 0.015 && session.chunksSent % 20 === 1) {
-      console.log('[NEKO-MIC offscreen] PCM chunk:', session.requestId.substring(0, 8), 'mode:', session.captureMode, 'level:', level.toFixed(5), 'sampleRate:', data.sampleRate || session.audioContext.sampleRate, 'ctxState:', session.audioContext.state);
-    }
-
     sendPcmChunk(session.requestId, {
       pcm16,
       sampleRate: data.sampleRate || session.audioContext.sampleRate,
@@ -206,12 +198,6 @@
       }
       const level = Math.sqrt(sumSquares / input.length);
       const pcm16 = encodePcm16Base64(input);
-      session.chunksSent += 1;
-
-      if (level > 0.015 && session.chunksSent % 20 === 1) {
-        console.log('[NEKO-MIC offscreen] PCM chunk:', session.requestId.substring(0, 8), 'mode:', session.captureMode, 'level:', level.toFixed(5), 'sampleRate:', audioContext.sampleRate, 'ctxState:', audioContext.state);
-      }
-
       sendPcmChunk(session.requestId, {
         pcm16,
         sampleRate: audioContext.sampleRate,
@@ -290,17 +276,6 @@
         try { t.stop(); } catch {}
       });
       cachedStreams.delete(STREAM_KEY);
-    }
-
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioInputs = devices.filter((d) => d.kind === 'audioinput');
-      console.log('[NEKO-MIC offscreen] Available audio inputs:', audioInputs.map((d) => ({
-        label: d.label || '(no label)',
-        deviceId: (d.deviceId || '').substring(0, 12) + '...'
-      })));
-    } catch (e) {
-      console.warn('[NEKO-MIC offscreen] enumerateDevices failed:', e);
     }
 
     const audioConstraints = resolveAudioConstraints(constraints);
