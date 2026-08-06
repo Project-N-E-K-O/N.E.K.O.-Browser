@@ -1,0 +1,3 @@
+[submodule "neko-floating-webui/vendor/browser-skill"]
+	path = neko-floating-webui/vendor/browser-skill
+	url = https://github.com/Tencent/BrowserSkill.git
