@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WSTransport } from "@/transport/ws-transport";
 import type { ProtocolFrame } from "@/transport/types";
 import { installBrowserSkillIntegration } from "../../src/browser-skill/integration";
@@ -40,6 +40,11 @@ class FakeWebSocket {
 }
 
 describe("BrowserSkill automation lease integration", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
   it("bounds unresponsive tabs while ordering reset, screenshots, and clicks", async () => {
     vi.useFakeTimers();
     const never = new Promise<never>(() => {});
@@ -149,7 +154,5 @@ describe("BrowserSkill automation lease integration", () => {
     });
 
     await transport.disconnect();
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 });

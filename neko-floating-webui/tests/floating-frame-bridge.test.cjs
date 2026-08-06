@@ -11,6 +11,7 @@ const content = read('content.js');
 const bridgeHtml = read('floating-frame.html');
 const bridgeCss = read('floating-frame.css');
 const bridge = read('floating-frame.js');
+const transparentMainWorld = read('transparent-main-world.js');
 
 test('floating surfaces navigate to an extension bridge instead of the WebUI origin', () => {
   const resources = manifest.web_accessible_resources.flatMap((entry) => entry.resources || []);
@@ -64,6 +65,12 @@ test('the bridge transfers the microphone port instead of cloning it', () => {
   assert.match(content, /postFrameBridgeMessage\(\{[\s\S]*?type: 'NEKO_PCM_PORT'[\s\S]*?\}, \[channel\.port2\]\)/);
   assert.match(bridge, /Array\.from\(event\.ports \|\| \[\]\)/);
   assert.match(bridge, /data\.type\.startsWith\('NEKO_PCM_'\) && data\._sender === 'floating'/);
+  assert.match(transparentMainWorld, /window\.location\.ancestorOrigins\?\.\[0\]/);
+  assert.match(transparentMainWorld, /referrer\.protocol === 'chrome-extension:'/);
+  assert.match(transparentMainWorld, /`chrome-extension:\/\/\$\{referrer\.host\}`/);
+  assert.match(transparentMainWorld, /event\.origin === FLOATING_BRIDGE_ORIGIN/);
+  assert.match(transparentMainWorld, /window\.parent\.postMessage\([\s\S]*?FLOATING_BRIDGE_ORIGIN\)/);
+  assert.doesNotMatch(transparentMainWorld, /window\.parent\.postMessage\([^\n]+, '\*'\)/);
 });
 
 test('fullscreen loads are health-gated before the WebUI iframe navigates', () => {

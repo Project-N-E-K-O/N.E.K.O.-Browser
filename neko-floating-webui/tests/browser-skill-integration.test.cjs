@@ -9,7 +9,24 @@ const manifest = JSON.parse(read('src/manifest-base.json'));
 const content = read('content.js');
 const popupHtml = read('popup.html');
 const popup = read('popup.js');
+const popupCss = read('popup.css');
 const wxtConfig = read('wxt.config.ts');
+const vitestConfig = read('vitest.config.ts');
+const packageJson = JSON.parse(read('package.json'));
+const ensureBrowserSkill = read('scripts/ensure-browser-skill.cjs');
+
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  assert.notEqual(start, -1, `missing function ${name}`);
+  const bodyStart = source.indexOf('{', start);
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`unterminated function ${name}`);
+}
 
 test('BrowserSkill permissions, daemon CSP, and native N.E.K.O surfaces share one manifest base', () => {
   for (const permission of ['debugger', 'idle', 'notifications', 'tabs', 'webNavigation', 'windows']) {
@@ -21,20 +38,112 @@ test('BrowserSkill permissions, daemon CSP, and native N.E.K.O surfaces share on
   assert.equal(manifest.side_panel.default_path, 'sidepanel.html');
 });
 
-test('N.E.K.O automation leases preserve hide, passthrough, and normal priority', () => {
-  const resolver = content.slice(
-    content.indexOf('function resolveAutomationSurfaceMode()'),
-    content.indexOf('function applyAutomationSurfaceState')
+test('build entrypoints initialize the BrowserSkill submodule when its sources are absent', () => {
+  for (const script of ['build', 'compile', 'test:integration', 'postinstall']) {
+    assert.match(packageJson.scripts[script], /^node scripts\/ensure-browser-skill\.cjs && /);
+  }
+  assert.match(ensureBrowserSkill, /submodule'\s*,\s*'update'/);
+  assert.match(ensureBrowserSkill, /'--init'/);
+  assert.match(ensureBrowserSkill, /'--recursive'/);
+  assert.match(ensureBrowserSkill, /neko-floating-webui\/vendor\/browser-skill/);
+  assert.match(ensureBrowserSkill, /'ls-tree'/);
+  assert.match(ensureBrowserSkill, /'rev-parse'/);
+  assert.match(ensureBrowserSkill, /actualSubmoduleCommit\(\) !== expectedCommit/);
+});
+
+test('N.E.K.O automation leases apply hide, passthrough, and normal priority', () => {
+  const automationLeases = new Map();
+  const createHarness = new Function(
+    'automationLeases',
+    `${extractFunction(content, 'resolveAutomationSurfaceMode')}
+     ${extractFunction(content, 'applyAutomationSurfaceState')}
+     return { applyAutomationSurfaceState, resolveAutomationSurfaceMode };`
   );
-  assert.ok(resolver.indexOf("modes.has('capture-hide')") < resolver.indexOf("modes.has('record-passthrough')"));
-  assert.ok(resolver.indexOf("modes.has('record-passthrough')") < resolver.indexOf("modes.has('pointer-bypass')"));
+  const harness = createHarness(automationLeases);
+  const styleValues = new Map();
+  const targetHost = {
+    dataset: {},
+    style: {
+      setProperty: (name, value, priority) => styleValues.set(name, { value, priority }),
+      removeProperty: (name) => styleValues.delete(name)
+    }
+  };
+
+  harness.applyAutomationSurfaceState(targetHost);
+  assert.equal(targetHost.dataset.nekoAutomationSurface, undefined);
+  assert.equal(styleValues.has('visibility'), false);
+
+  automationLeases.set('click', 'pointer-bypass');
+  harness.applyAutomationSurfaceState(targetHost);
+  assert.equal(targetHost.dataset.nekoAutomationSurface, 'pointer-bypass');
+
+  automationLeases.set('record', 'record-passthrough');
+  harness.applyAutomationSurfaceState(targetHost);
+  assert.equal(targetHost.dataset.nekoAutomationSurface, 'record-passthrough');
+
+  automationLeases.set('capture', 'capture-hide');
+  harness.applyAutomationSurfaceState(targetHost);
+  assert.equal(targetHost.dataset.nekoAutomationSurface, 'capture-hide');
+  assert.deepEqual(styleValues.get('visibility'), { value: 'hidden', priority: 'important' });
+
+  automationLeases.delete('capture');
+  harness.applyAutomationSurfaceState(targetHost);
+  assert.equal(targetHost.dataset.nekoAutomationSurface, 'record-passthrough');
+  assert.equal(styleValues.has('visibility'), false);
+
   assert.match(content, /data-neko-automation-surface="pointer-bypass"/);
   assert.match(content, /data-neko-automation-surface="record-passthrough"/);
-  assert.match(content, /visibility', 'hidden', 'important'/);
+  assert.match(
+    content,
+    /:host\(\[data-neko-automation-surface="pointer-bypass"\]\) #\$\{PANEL_ID\}\[data-display-mode="fullscreen"\]\[data-embed-interactive="true"\] #\$\{FRAME_ID\}/
+  );
   assert.match(content, /NEKO_AUTOMATION_LEASE_RESET/);
   assert.match(content, /message\.mode === 'capture-hide' && message\.active/);
   assert.match(content, /waitForAutomationPaint\(\)\.then\(\(\) => sendResponse\(\{ ok: true \}\)\)/);
-  assert.match(content, /secondFrame = requestAnimationFrame\(finish\)/);
+});
+
+test('automation visibility acknowledgement waits across a paint boundary', async () => {
+  const callbacks = new Map();
+  const timers = new Map();
+  let nextId = 1;
+  const waitForAutomationPaint = new Function(
+    'host',
+    'requestAnimationFrame',
+    'cancelAnimationFrame',
+    'setTimeout',
+    'clearTimeout',
+    `${extractFunction(content, 'waitForAutomationPaint')}; return waitForAutomationPaint;`
+  )(
+    { isConnected: true, getBoundingClientRect: () => ({}) },
+    (callback) => {
+      const id = nextId++;
+      callbacks.set(id, callback);
+      return id;
+    },
+    (id) => callbacks.delete(id),
+    (callback) => {
+      const id = nextId++;
+      timers.set(id, callback);
+      return id;
+    },
+    (id) => timers.delete(id)
+  );
+
+  let settled = false;
+  const pending = waitForAutomationPaint().then(() => { settled = true; });
+  assert.equal(callbacks.size, 1);
+  const firstFrame = callbacks.entries().next().value;
+  callbacks.delete(firstFrame[0]);
+  firstFrame[1]();
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(callbacks.size, 1);
+  const secondFrame = callbacks.entries().next().value;
+  callbacks.delete(secondFrame[0]);
+  secondFrame[1]();
+  await pending;
+  assert.equal(settled, true);
+  assert.equal(timers.size, 0);
 });
 
 test('N.E.K.O stays above BrowserSkill and is excluded from semantic observations', () => {
@@ -43,6 +152,7 @@ test('N.E.K.O stays above BrowserSkill and is excluded from semantic observation
   assert.match(content, /nextHost\.style\.zIndex = '2147483647'/);
   assert.match(content, /BSK_OVERLAY_Z_INDEX = '2147483646'/);
   assert.match(content, /browserSkillHost\.style\.setProperty\('z-index', BSK_OVERLAY_Z_INDEX, 'important'\)/);
+  assert.doesNotMatch(content, /document\.documentElement\.append\(host\)/);
   assert.match(content, /integrationLayerObserver\.observe\(document\.documentElement, \{ childList: true \}\)/);
   assert.doesNotMatch(content, /integrationLayerObserver\.observe\([^\n]+subtree: true/);
 });
@@ -56,6 +166,22 @@ test('native popup uses the bsk-popup runtime port and exposes connection and re
   assert.match(popupHtml, /id="bsk-record-purpose"/);
   assert.match(popupHtml, /id="bsk-record-url"/);
   assert.match(popupHtml, /id="bsk-copy-record"/);
+  assert.match(popupHtml, /class="bsk-status-line" aria-live="polite"/);
+  assert.match(popupCss, /\.bsk-status-badge\s*\{[\s\S]*?font-size:\s*10px/);
+  assert.match(popupCss, /\.bsk-mini-button\s*\{[\s\S]*?font-size:\s*10px/);
+});
+
+test('popup metadata and copy feedback use generated versions and one restore timer', () => {
+  assert.match(popup, /BSK_PROTOCOL_VERSION = '__NEKO_BSK_PROTOCOL_VERSION__'/);
+  assert.match(popup, /扩展协议 v\$\{BSK_PROTOCOL_VERSION\}/);
+  assert.doesNotMatch(popup, /扩展协议 v1\.0/);
+  assert.match(wxtConfig, /PROTOCOL_VERSION as browserSkillProtocolVersion/);
+  assert.match(wxtConfig, /replaceAll\(browserSkillProtocolPlaceholder, browserSkillProtocolVersion\)/);
+  assert.match(popup, /button\.dataset\.originalLabel/);
+  assert.match(popup, /window\.clearTimeout\(previousTimer\)/);
+  assert.match(popup, /button\.dataset\.restoreTimer = String\(restoreTimer\)/);
+  assert.match(vitestConfig, /vendor\/browser-skill\/apps\/extension\/package\.json/);
+  assert.match(vitestConfig, /JSON\.stringify\(browserSkillPackage\.version\)/);
 });
 
 test('record prompt remains available for compatible protocol skew and quotes PowerShell arguments', () => {

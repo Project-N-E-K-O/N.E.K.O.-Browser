@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "wxt";
 import { adaptBrowserSkillVomCapture } from "./src/browser-skill/vom-adapter";
+import { PROTOCOL_VERSION as browserSkillProtocolVersion } from "./vendor/browser-skill/apps/extension/src/transport/handshake";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const browserSkillRoot = resolve(here, "vendor/browser-skill");
@@ -15,6 +16,7 @@ const manifestBase = JSON.parse(
   readFileSync(resolve(here, "src/manifest-base.json"), "utf8"),
 );
 const browserSkillDaemonUrl = process.env.BSK_DAEMON_WS_URL ?? "ws://127.0.0.1:52800";
+const browserSkillProtocolPlaceholder = "__NEKO_BSK_PROTOCOL_VERSION__";
 const browserSkillDaemonOrigin = (() => {
   const url = new URL(browserSkillDaemonUrl);
   if (url.protocol !== "ws:" && url.protocol !== "wss:") {
@@ -75,6 +77,21 @@ function emitDirectory(
       source: readFileSync(absolute),
     });
   }
+}
+
+function readRuntimeFile(fileName: string): Buffer {
+  const source = readFileSync(resolve(here, fileName));
+  if (fileName !== "popup.js") {
+    return source;
+  }
+
+  const popupSource = source.toString("utf8");
+  if (!popupSource.includes(browserSkillProtocolPlaceholder)) {
+    throw new Error("popup.js is missing the BrowserSkill protocol version placeholder");
+  }
+  return Buffer.from(
+    popupSource.replaceAll(browserSkillProtocolPlaceholder, browserSkillProtocolVersion),
+  );
 }
 
 export default defineConfig({
@@ -142,7 +159,7 @@ export default defineConfig({
             this.emitFile({
               type: "asset",
               fileName,
-              source: readFileSync(resolve(here, fileName)),
+              source: readRuntimeFile(fileName),
             });
           }
           emitDirectory((file) => this.emitFile(file), resolve(here, "assets"), here);

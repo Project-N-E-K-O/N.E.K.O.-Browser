@@ -1146,7 +1146,7 @@ select:disabled {
   border: 1px solid var(--neko-border-soft);
   border-radius: 999px;
   color: var(--neko-text-sub);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
 }
@@ -1174,7 +1174,7 @@ select:disabled {
   background: var(--neko-surface);
   color: var(--neko-text);
   cursor: pointer;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
 }
 

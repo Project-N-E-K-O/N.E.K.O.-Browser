@@ -46,12 +46,6 @@ $Bsk = (Resolve-Path '..\N.E.K.O\plugin\plugins\browser_skill\bin\bsk.exe').Path
 & $Bsk status
 ```
 
-当前开发环境中的完整路径为：
-
-```text
-H:\AI\neko-music\N.E.K.O\plugin\plugins\browser_skill\bin\bsk.exe
-```
-
 如果 N.E.K.O 安装在其他位置，只需修改 `$Bsk`。
 
 ## 使用扩展

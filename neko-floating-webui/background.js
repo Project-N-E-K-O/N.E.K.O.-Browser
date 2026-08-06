@@ -164,6 +164,7 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const pcmCleanup = stopPcmRoutesForTab(tabId);
   const state = await getStoredState();
   if (state.activeTabId === tabId) {
     await chrome.storage.local.set({
@@ -171,12 +172,14 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
       fullscreenFromCollapsedFloating: false
     });
   }
+  await pcmCleanup;
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (changeInfo.status !== 'loading') {
     return;
   }
+  void stopPcmRoutesForTab(tabId);
 
   const state = await getStoredState();
   if (state.activeTabId !== tabId) {
@@ -398,11 +401,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((e) => {
         const error = normalizeRuntimeError(e);
-        routeSignalToContent({
-          type: 'NEKO_PCM_SIGNAL',
-          requestId: message.requestId,
-          error
-        });
         sendResponse({ ok: false, error: error.message });
       });
     return true;
@@ -1107,25 +1105,41 @@ async function performHealthCheck() {
 }
 
 async function handlePcmStart(message, sender) {
+  let route;
   if (message.fromFloating) {
-    mediaRoutes.set(message.requestId, { extensionPage: true, tabId: sender.tab?.id, frameId: sender.frameId });
+    route = { extensionPage: true, tabId: sender.tab?.id, frameId: sender.frameId };
     console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'floating tab:', sender.tab?.id, 'frame:', sender.frameId);
   } else if (sender.tab?.id) {
-    mediaRoutes.set(message.requestId, { tabId: sender.tab.id, frameId: sender.frameId });
+    route = { tabId: sender.tab.id, frameId: sender.frameId };
     console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'tab:', sender.tab.id, 'frame:', sender.frameId);
   } else {
-    mediaRoutes.set(message.requestId, { extensionPage: true });
+    route = { extensionPage: true };
     console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'extension-page');
   }
-  await ensureOffscreen();
-  const response = await sendOffscreenMessage({
-    type: 'NEKO_PCM_START',
-    requestId: message.requestId,
-    constraints: message.constraints,
-    sampleRate: message.sampleRate
-  });
-  if (response && response.ok === false) {
-    throw new Error(response.error || 'Offscreen rejected PCM start');
+  mediaRoutes.set(message.requestId, route);
+  try {
+    await ensureOffscreen();
+    if (mediaRoutes.get(message.requestId) !== route) {
+      return;
+    }
+    const response = await sendOffscreenMessage({
+      type: 'NEKO_PCM_START',
+      requestId: message.requestId,
+      constraints: message.constraints,
+      sampleRate: message.sampleRate
+    });
+    if (!mediaRoutes.has(message.requestId)) {
+      await stopOffscreenPcmSession(message.requestId);
+      return;
+    }
+    if (response && response.ok === false) {
+      throw new Error(response.error || 'Offscreen rejected PCM start');
+    }
+  } catch (error) {
+    if (mediaRoutes.get(message.requestId) === route) {
+      mediaRoutes.delete(message.requestId);
+    }
+    throw error;
   }
 }
 
@@ -1133,12 +1147,30 @@ async function handlePcmStop(message) {
   if (!message.requestId) {
     return;
   }
-  await ensureOffscreen();
-  await sendOffscreenMessage({
-    type: 'NEKO_PCM_STOP',
-    requestId: message.requestId
-  }).catch(() => {});
   mediaRoutes.delete(message.requestId);
+  await stopOffscreenPcmSession(message.requestId);
+}
+
+async function stopPcmRoutesForTab(tabId) {
+  const requestIds = [];
+  for (const [requestId, route] of mediaRoutes) {
+    if (route.tabId !== tabId) {
+      continue;
+    }
+    mediaRoutes.delete(requestId);
+    requestIds.push(requestId);
+  }
+  await Promise.all(requestIds.map(stopOffscreenPcmSession));
+}
+
+async function stopOffscreenPcmSession(requestId) {
+  try {
+    await ensureOffscreen();
+    await sendOffscreenMessage({
+      type: 'NEKO_PCM_STOP',
+      requestId
+    });
+  } catch {}
 }
 
 function routeSignalToContent(message) {

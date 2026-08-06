@@ -520,6 +520,11 @@
         pointer-events: none !important;
       }
 
+      :host([data-neko-automation-surface="pointer-bypass"]) #${PANEL_ID}[data-display-mode="fullscreen"][data-embed-interactive="true"] #${FRAME_ID},
+      :host([data-neko-automation-surface="record-passthrough"]) #${PANEL_ID}[data-display-mode="fullscreen"][data-embed-interactive="true"] #${FRAME_ID} {
+        pointer-events: none !important;
+      }
+
       #${PANEL_ID} {
         position: fixed;
         z-index: 2147483647;
@@ -2433,15 +2438,6 @@
     const browserSkillHost = document.querySelector(BSK_OVERLAY_SELECTOR);
     if (browserSkillHost) {
       browserSkillHost.style.setProperty('z-index', BSK_OVERLAY_Z_INDEX, 'important');
-    }
-    if (!host?.isConnected || !browserSkillHost || browserSkillHost.parentNode !== host.parentNode) {
-      return;
-    }
-    const hostIsBeforeBrowserSkill = Boolean(
-      host.compareDocumentPosition(browserSkillHost) & Node.DOCUMENT_POSITION_FOLLOWING
-    );
-    if (hostIsBeforeBrowserSkill) {
-      document.documentElement.append(host);
     }
   }
 

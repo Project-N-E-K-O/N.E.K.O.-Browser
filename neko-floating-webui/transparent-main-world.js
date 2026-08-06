@@ -1,6 +1,7 @@
 (function () {
   const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
   const isNativeSidePanel = window.name === 'neko-native-sidepanel';
+  const FLOATING_BRIDGE_ORIGIN = resolveFloatingBridgeOrigin();
   if (
     window.top === window
     || (!isEmbeddedSurface && !isNativeSidePanel)
@@ -49,13 +50,20 @@
       return;
     }
     if (event.data.type === 'NEKO_PCM_PORT') {
-      if (event.source === window.parent && event.ports && event.ports[0]) {
+      if (
+        FLOATING_BRIDGE_ORIGIN
+        && event.source === window.parent
+        && event.origin === FLOATING_BRIDGE_ORIGIN
+        && event.ports
+        && event.ports[0]
+      ) {
         attachFloatingPcmPort(event.ports[0]);
       }
       return;
     }
     const fromIsolated = event.source === window && event.data._sender === 'isolated';
     const fromFloating = event.source === window.parent
+      && event.origin === FLOATING_BRIDGE_ORIGIN
       && event.data._sender === 'floating';
     if (!fromIsolated && !fromFloating) {
       return;
@@ -417,10 +425,27 @@
           floatingPcmPort = null;
         }
       }
-      window.parent.postMessage({ ...data, _sender: 'main' }, '*');
+      if (FLOATING_BRIDGE_ORIGIN) {
+        window.parent.postMessage({ ...data, _sender: 'main' }, FLOATING_BRIDGE_ORIGIN);
+      }
       return;
     }
     window.postMessage({ ...data, _sender: 'main' }, window.location.origin);
+  }
+
+  function resolveFloatingBridgeOrigin() {
+    const ancestorOrigin = window.location.ancestorOrigins?.[0];
+    const candidates = [ancestorOrigin, document.referrer];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const referrer = new URL(candidate);
+        if (referrer.protocol === 'chrome-extension:' && referrer.host) {
+          return `chrome-extension://${referrer.host}`;
+        }
+      } catch {}
+    }
+    return '';
   }
 
   function attachFloatingPcmPort(port) {

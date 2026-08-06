@@ -5,13 +5,13 @@
   "type": "module",
   "packageManager": "pnpm@10.17.0",
   "scripts": {
-    "dev": "wxt",
-    "build": "wxt build",
-    "compile": "wxt prepare && tsc --noEmit",
+    "dev": "node scripts/ensure-browser-skill.cjs && wxt",
+    "build": "node scripts/ensure-browser-skill.cjs && wxt build",
+    "compile": "node scripts/ensure-browser-skill.cjs && wxt prepare && tsc --noEmit",
     "test": "pnpm test:neko && pnpm test:integration",
     "test:neko": "node tests/test-neko.cjs",
-    "test:integration": "vitest run",
-    "postinstall": "wxt prepare"
+    "test:integration": "node scripts/ensure-browser-skill.cjs && vitest run",
+    "postinstall": "node scripts/ensure-browser-skill.cjs && wxt prepare"
   },
   "dependencies": {
     "@remixicon/react": "^4.9.0",

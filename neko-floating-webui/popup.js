@@ -1,5 +1,6 @@
 (() => {
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
+  const BSK_PROTOCOL_VERSION = '__NEKO_BSK_PROTOCOL_VERSION__';
   const modesEl = document.querySelector('.modes');
   const modeButtons = document.querySelectorAll('.modes button');
   const sectionEls = document.querySelectorAll('.section');
@@ -571,7 +572,7 @@
     const versionSkew = status === 'version_skew';
     bskVersionWarning.hidden = !versionSkew;
     bskVersionWarning.textContent = versionSkew
-      ? `扩展协议 v1.0，daemon 协议 v${handshake.protocol_version || '未知'}。`
+      ? `扩展协议 v${BSK_PROTOCOL_VERSION}，daemon 协议 v${handshake.protocol_version || '未知'}。`
       : '';
     bskError.hidden = !bskSnapshot.lastError;
     bskError.textContent = bskSnapshot.lastError || '';
@@ -613,13 +614,22 @@
   }
 
   async function copyBrowserSkillText(value, button, successLabel) {
-    const originalLabel = button.textContent;
+    if (button.dataset.originalLabel === undefined) {
+      button.dataset.originalLabel = button.textContent || '';
+    }
+    const originalLabel = button.dataset.originalLabel;
     try {
       await navigator.clipboard.writeText(value);
       button.textContent = successLabel;
-      window.setTimeout(() => {
+      const previousTimer = Number(button.dataset.restoreTimer);
+      if (Number.isFinite(previousTimer)) {
+        window.clearTimeout(previousTimer);
+      }
+      const restoreTimer = window.setTimeout(() => {
         button.textContent = originalLabel;
+        delete button.dataset.restoreTimer;
       }, 1500);
+      button.dataset.restoreTimer = String(restoreTimer);
     } catch (error) {
       bskSnapshot = {
         ...bskSnapshot,
