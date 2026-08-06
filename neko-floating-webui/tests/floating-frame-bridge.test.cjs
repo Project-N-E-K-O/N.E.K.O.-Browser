@@ -70,7 +70,10 @@ test('the bridge transfers the microphone port instead of cloning it', () => {
   assert.match(transparentMainWorld, /`chrome-extension:\/\/\$\{referrer\.host\}`/);
   assert.match(transparentMainWorld, /event\.origin === FLOATING_BRIDGE_ORIGIN/);
   assert.match(transparentMainWorld, /window\.parent\.postMessage\([\s\S]*?FLOATING_BRIDGE_ORIGIN\)/);
-  assert.doesNotMatch(transparentMainWorld, /window\.parent\.postMessage\([^\n]+, '\*'\)/);
+  assert.doesNotMatch(
+    transparentMainWorld,
+    /window\.parent\.postMessage\([\s\S]*?['"]\*['"]\s*\)/
+  );
 });
 
 test('fullscreen loads are health-gated before the WebUI iframe navigates', () => {

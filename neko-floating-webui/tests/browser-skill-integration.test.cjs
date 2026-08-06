@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { extractFunction } = require('./helpers/extract-function.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
@@ -14,19 +15,6 @@ const wxtConfig = read('wxt.config.ts');
 const vitestConfig = read('vitest.config.ts');
 const packageJson = JSON.parse(read('package.json'));
 const ensureBrowserSkill = read('scripts/ensure-browser-skill.cjs');
-
-function extractFunction(source, name) {
-  const start = source.indexOf(`function ${name}`);
-  assert.notEqual(start, -1, `missing function ${name}`);
-  const bodyStart = source.indexOf('{', start);
-  let depth = 0;
-  for (let index = bodyStart; index < source.length; index += 1) {
-    if (source[index] === '{') depth += 1;
-    if (source[index] === '}') depth -= 1;
-    if (depth === 0) return source.slice(start, index + 1);
-  }
-  throw new Error(`unterminated function ${name}`);
-}
 
 test('BrowserSkill permissions, daemon CSP, and native N.E.K.O surfaces share one manifest base', () => {
   for (const permission of ['debugger', 'idle', 'notifications', 'tabs', 'webNavigation', 'windows']) {
@@ -46,9 +34,13 @@ test('build entrypoints initialize the BrowserSkill submodule when its sources a
   assert.match(ensureBrowserSkill, /'--init'/);
   assert.match(ensureBrowserSkill, /'--recursive'/);
   assert.match(ensureBrowserSkill, /neko-floating-webui\/vendor\/browser-skill/);
-  assert.match(ensureBrowserSkill, /'ls-tree'/);
+  assert.match(ensureBrowserSkill, /'ls-files'/);
+  assert.match(ensureBrowserSkill, /'--stage'/);
+  assert.doesNotMatch(ensureBrowserSkill, /'ls-tree'\s*,\s*'HEAD'/);
   assert.match(ensureBrowserSkill, /'rev-parse'/);
   assert.match(ensureBrowserSkill, /actualSubmoduleCommit\(\) !== expectedCommit/);
+  assert.match(ensureBrowserSkill, /timeout:\s*SUBMODULE_UPDATE_TIMEOUT_MS/);
+  assert.match(ensureBrowserSkill, /GIT_TERMINAL_PROMPT:\s*'0'/);
 });
 
 test('N.E.K.O automation leases apply hide, passthrough, and normal priority', () => {

@@ -11,9 +11,17 @@ test('a STOP received while getUserMedia is pending cancels PCM startup', async 
   let resolveStream;
   let audioContextCount = 0;
   let stoppedTracks = 0;
+  const track = {
+    readyState: 'live',
+    stop() {
+      if (track.readyState === 'ended') return;
+      track.readyState = 'ended';
+      stoppedTracks += 1;
+    }
+  };
   const stream = {
-    getAudioTracks: () => [{ readyState: 'live' }],
-    getTracks: () => [{ stop: () => { stoppedTracks += 1; } }]
+    getAudioTracks: () => [track],
+    getTracks: () => [track]
   };
   const getUserMedia = () => new Promise((resolve) => {
     resolveStream = resolve;
@@ -65,7 +73,10 @@ test('a STOP received while getUserMedia is pending cancels PCM startup', async 
   );
   resolveStream(stream);
 
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  const deadline = Date.now() + 1500;
+  while (stoppedTracks !== 1 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   assert.equal(audioContextCount, 0, 'cancelled startup must not construct an AudioContext');
   assert.equal(stoppedTracks, 1, 'the late microphone stream must be released');
 });

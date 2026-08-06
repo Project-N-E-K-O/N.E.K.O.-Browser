@@ -2,24 +2,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { extractFunction } = require('./helpers/extract-function.cjs');
 
 const background = fs.readFileSync(path.resolve(__dirname, '..', 'background.js'), 'utf8');
 
-function extractFunction(source, name) {
-  const asyncStart = source.indexOf(`async function ${name}`);
-  const start = asyncStart >= 0 ? asyncStart : source.indexOf(`function ${name}`);
-  assert.notEqual(start, -1, `missing function ${name}`);
-  const bodyStart = source.indexOf('{', start);
-  let depth = 0;
-  for (let index = bodyStart; index < source.length; index += 1) {
-    if (source[index] === '{') depth += 1;
-    if (source[index] === '}') depth -= 1;
-    if (depth === 0) return source.slice(start, index + 1);
-  }
-  throw new Error(`unterminated function ${name}`);
-}
-
-function createHarness(mediaRoutes, ensureOffscreen, sendOffscreenMessage) {
+function createHarness(mediaRoutes, ensureOffscreen, sendOffscreenMessage, logger = null) {
   return new Function(
     'mediaRoutes',
     'ensureOffscreen',
@@ -34,18 +21,28 @@ function createHarness(mediaRoutes, ensureOffscreen, sendOffscreenMessage) {
     mediaRoutes,
     ensureOffscreen,
     sendOffscreenMessage,
-    { log() {} }
+    logger || { log() {}, warn() {} }
   );
 }
 
 test('PCM routes roll back when startup or shutdown cannot reach offscreen', async () => {
   const mediaRoutes = new Map();
   let ensureError = new Error('offscreen unavailable');
-  let startResponse = { ok: true };
+  let startError = null;
+  const warnings = [];
   const harness = createHarness(
     mediaRoutes,
     () => ensureError ? Promise.reject(ensureError) : Promise.resolve(),
-    (message) => Promise.resolve(message.type === 'NEKO_PCM_START' ? startResponse : { ok: true })
+    (message) => {
+      if (message.type === 'NEKO_PCM_START' && startError) {
+        return Promise.reject(startError);
+      }
+      return Promise.resolve({ ok: true });
+    },
+    {
+      log() {},
+      warn(...args) { warnings.push(args); }
+    }
   );
   const sender = { tab: { id: 7 }, frameId: 0 };
 
@@ -56,19 +53,37 @@ test('PCM routes roll back when startup or shutdown cannot reach offscreen', asy
   assert.equal(mediaRoutes.has('start-failure'), false);
 
   ensureError = null;
-  startResponse = { ok: false, error: 'capture rejected' };
+  startError = new Error('capture rejected');
   await assert.rejects(
     harness.handlePcmStart({ requestId: 'start-rejected', fromFloating: true }, sender),
     /capture rejected/
   );
   assert.equal(mediaRoutes.has('start-rejected'), false);
 
-  startResponse = { ok: true };
+  startError = null;
   await harness.handlePcmStart({ requestId: 'stop-failure', fromFloating: true }, sender);
   assert.equal(mediaRoutes.has('stop-failure'), true);
   ensureError = new Error('offscreen stopped responding');
   await harness.handlePcmStop({ requestId: 'stop-failure' });
   assert.equal(mediaRoutes.has('stop-failure'), false);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].join(' '), /stop-failure/);
+  assert.match(warnings[0].join(' '), /offscreen stopped responding/);
+});
+
+test('function extraction respects name boundaries and JavaScript brace syntax', () => {
+  const fixture = `
+    function handlePcmStopAll() { return 'wrong'; }
+    async function handlePcmStop() {
+      const text = 'literal } brace';
+      const pattern = /[{}]/;
+      return ` + '`template ${text} { brace }`' + `;
+    }
+  `;
+  const extracted = extractFunction(fixture, 'handlePcmStop');
+  assert.match(extracted, /^async function handlePcmStop\s*\(/);
+  assert.match(extracted, /template/);
+  assert.doesNotMatch(extracted, /handlePcmStopAll/);
 });
 
 test('closing or navigating a tab stops only its PCM routes', async () => {

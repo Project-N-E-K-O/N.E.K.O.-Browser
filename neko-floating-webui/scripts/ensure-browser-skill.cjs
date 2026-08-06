@@ -6,6 +6,7 @@ const extensionRoot = path.resolve(__dirname, '..');
 const repositoryRoot = path.resolve(extensionRoot, '..');
 const submodulePath = 'neko-floating-webui/vendor/browser-skill';
 const submoduleRoot = path.join(extensionRoot, 'vendor', 'browser-skill');
+const SUBMODULE_UPDATE_TIMEOUT_MS = 120_000;
 const browserSkillPackage = path.join(
   submoduleRoot,
   'apps',
@@ -25,8 +26,8 @@ function expectedSubmoduleCommit() {
   return readCommit([
     '-C',
     repositoryRoot,
-    'ls-tree',
-    'HEAD',
+    'ls-files',
+    '--stage',
     '--',
     submodulePath
   ]);
@@ -52,7 +53,14 @@ function updateSubmodule() {
       '--',
       submodulePath
     ],
-    { stdio: 'inherit' }
+    {
+      stdio: 'inherit',
+      timeout: SUBMODULE_UPDATE_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0'
+      }
+    }
   );
 
   if (result.error) {

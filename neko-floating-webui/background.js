@@ -1122,7 +1122,7 @@ async function handlePcmStart(message, sender) {
     if (mediaRoutes.get(message.requestId) !== route) {
       return;
     }
-    const response = await sendOffscreenMessage({
+    await sendOffscreenMessage({
       type: 'NEKO_PCM_START',
       requestId: message.requestId,
       constraints: message.constraints,
@@ -1131,9 +1131,6 @@ async function handlePcmStart(message, sender) {
     if (!mediaRoutes.has(message.requestId)) {
       await stopOffscreenPcmSession(message.requestId);
       return;
-    }
-    if (response && response.ok === false) {
-      throw new Error(response.error || 'Offscreen rejected PCM start');
     }
   } catch (error) {
     if (mediaRoutes.get(message.requestId) === route) {
@@ -1170,7 +1167,13 @@ async function stopOffscreenPcmSession(requestId) {
       type: 'NEKO_PCM_STOP',
       requestId
     });
-  } catch {}
+  } catch (error) {
+    console.warn(
+      '[NEKO-MIC background] PCM stop failed:',
+      requestId,
+      String(error?.message || error)
+    );
+  }
 }
 
 function routeSignalToContent(message) {
