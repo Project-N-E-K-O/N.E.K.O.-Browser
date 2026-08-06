@@ -9,7 +9,7 @@ const popupHtml = read('popup.html');
 const popup = read('popup.js');
 const popupCss = read('popup.css');
 const content = read('content.js');
-const manifest = JSON.parse(read('manifest.json'));
+const manifest = JSON.parse(read('src/manifest-base.json'));
 
 const components = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
 

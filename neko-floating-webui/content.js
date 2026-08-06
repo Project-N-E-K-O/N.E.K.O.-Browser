@@ -16,6 +16,14 @@
   const EMBED_PROTOCOL_FALLBACK_MS = 1500;
   const EMBED_HIT_TEST_TIMEOUT_MS = 500;
   const EMBED_REGION_REFRESH_MS = 200;
+  const BSK_AUTOMATION_BYPASS = 'bh-automation-bypass';
+  const BSK_RECORD_START = 'bsk-record-start';
+  const BSK_RECORD_STOP = 'bsk-record-stop';
+  const BSK_RECORD_CANCEL = 'bsk-record-cancel';
+  const NEKO_AUTOMATION_LEASE = 'NEKO_AUTOMATION_LEASE';
+  const NEKO_AUTOMATION_LEASE_RESET = 'NEKO_AUTOMATION_LEASE_RESET';
+  const BSK_OVERLAY_SELECTOR = 'browser-skill-overlay[data-bsk-overlay]';
+  const BSK_OVERLAY_Z_INDEX = '2147483646';
   const CONTENT_RUNTIME_ID = globalThis.crypto?.randomUUID?.()
     || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const EMBED_SURFACE_COMPONENT_ORDER = Object.freeze([
@@ -98,9 +106,66 @@
   let lastHostPointer = null;
   let embedRegionRefreshTimer = 0;
   let lastEmbedRegionRefreshAt = 0;
+  const automationLeases = new Map();
+
+  const integrationLayerObserver = new MutationObserver((records) => {
+    const browserSkillHostAdded = records.some((record) => Array.from(record.addedNodes).some((node) => (
+      node instanceof Element
+      && (node.matches(BSK_OVERLAY_SELECTOR) || node.querySelector(BSK_OVERLAY_SELECTOR))
+    )));
+    if (browserSkillHostAdded) {
+      ensureNekoHostIsTopLayer();
+    }
+  });
+  // BrowserSkill mounts directly under <html> and may remount after host loss.
+  // Watch only direct children so ordinary page mutations never trigger a full query.
+  integrationLayerObserver.observe(document.documentElement, { childList: true });
+  ensureNekoHostIsTopLayer();
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || typeof message.type !== 'string') {
+      return false;
+    }
+
+    if (message.type === NEKO_AUTOMATION_LEASE) {
+      const validMode = message.mode === 'pointer-bypass'
+        || message.mode === 'capture-hide'
+        || message.mode === 'record-passthrough';
+      if (typeof message.leaseId === 'string' && validMode && typeof message.active === 'boolean') {
+        setAutomationLease(message.leaseId, message.mode, message.active);
+        if (message.mode === 'capture-hide' && message.active) {
+          void waitForAutomationPaint().then(() => sendResponse({ ok: true }));
+          return true;
+        }
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, error: 'Invalid N.E.K.O automation lease.' });
+      }
+      return false;
+    }
+
+    if (message.type === NEKO_AUTOMATION_LEASE_RESET) {
+      automationLeases.clear();
+      applyAutomationSurfaceState(host);
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type === BSK_AUTOMATION_BYPASS && typeof message.enabled === 'boolean') {
+      setAutomationLease('browser-skill:pointer-bypass', 'pointer-bypass', message.enabled);
+      return false;
+    }
+
+    if (message.type === BSK_RECORD_START && typeof message.requestId === 'string') {
+      setAutomationLease(`browser-skill:record:${message.requestId}`, 'record-passthrough', true);
+      return false;
+    }
+
+    if (
+      (message.type === BSK_RECORD_STOP || message.type === BSK_RECORD_CANCEL)
+      && typeof message.requestId === 'string'
+    ) {
+      setAutomationLease(`browser-skill:record:${message.requestId}`, 'record-passthrough', false);
       return false;
     }
 
@@ -448,6 +513,11 @@
            Keep the shadow host in the page's scheme so floating/fullscreen
            surfaces remain genuinely transparent on dark pages. */
         color-scheme: inherit;
+      }
+
+      :host([data-neko-automation-surface="pointer-bypass"]) *,
+      :host([data-neko-automation-surface="record-passthrough"]) * {
+        pointer-events: none !important;
       }
 
       #${PANEL_ID} {
@@ -2289,13 +2359,90 @@
     const nextHost = document.createElement('div');
     nextHost.id = HOST_ID;
     nextHost.dataset.nekoContentRuntimeId = CONTENT_RUNTIME_ID;
+    nextHost.dataset.bskObservationIgnore = '';
     nextHost.style.all = 'initial';
     nextHost.style.position = 'fixed';
     nextHost.style.inset = '0';
     nextHost.style.zIndex = '2147483647';
     nextHost.style.pointerEvents = 'none';
     document.documentElement.append(nextHost);
+    applyAutomationSurfaceState(nextHost);
     return nextHost;
+  }
+
+  function setAutomationLease(leaseId, mode, active) {
+    if (active) {
+      automationLeases.set(leaseId, mode);
+    } else {
+      automationLeases.delete(leaseId);
+    }
+    applyAutomationSurfaceState(host);
+  }
+
+  function resolveAutomationSurfaceMode() {
+    const modes = new Set(automationLeases.values());
+    if (modes.has('capture-hide')) return 'capture-hide';
+    if (modes.has('record-passthrough')) return 'record-passthrough';
+    if (modes.has('pointer-bypass')) return 'pointer-bypass';
+    return 'normal';
+  }
+
+  function applyAutomationSurfaceState(targetHost) {
+    if (!targetHost) return;
+    const mode = resolveAutomationSurfaceMode();
+    if (mode === 'normal') {
+      delete targetHost.dataset.nekoAutomationSurface;
+      targetHost.style.removeProperty('visibility');
+      return;
+    }
+    targetHost.dataset.nekoAutomationSurface = mode;
+    if (mode === 'capture-hide') {
+      targetHost.style.setProperty('visibility', 'hidden', 'important');
+    } else {
+      targetHost.style.removeProperty('visibility');
+    }
+  }
+
+  function waitForAutomationPaint() {
+    if (!host?.isConnected) return Promise.resolve();
+    // Force the visibility mutation into the current render tree, then wait
+    // across a paint boundary. Background tabs can throttle rAF, so retain a
+    // bounded fallback instead of holding the runtime message port forever.
+    host.getBoundingClientRect();
+    return new Promise((resolve) => {
+      let settled = false;
+      let firstFrame = 0;
+      let secondFrame = 0;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (firstFrame) cancelAnimationFrame(firstFrame);
+        if (secondFrame) cancelAnimationFrame(secondFrame);
+        resolve();
+      };
+      const timeout = setTimeout(finish, 200);
+      firstFrame = requestAnimationFrame(() => {
+        firstFrame = 0;
+        secondFrame = requestAnimationFrame(finish);
+      });
+    });
+  }
+
+  function ensureNekoHostIsTopLayer() {
+    const browserSkillHost = document.querySelector(BSK_OVERLAY_SELECTOR);
+    if (browserSkillHost) {
+      browserSkillHost.style.setProperty('z-index', BSK_OVERLAY_Z_INDEX, 'important');
+    }
+    if (!host?.isConnected || !browserSkillHost || browserSkillHost.parentNode !== host.parentNode) {
+      return;
+    }
+    const hostIsBeforeBrowserSkill = Boolean(
+      host.compareDocumentPosition(browserSkillHost) & Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    if (hostIsBeforeBrowserSkill) {
+      document.documentElement.append(host);
+    }
   }
 
   function resolveEmbeddingColorScheme() {

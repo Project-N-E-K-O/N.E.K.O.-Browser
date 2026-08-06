@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
-const manifest = JSON.parse(read('manifest.json'));
+const manifest = JSON.parse(read('src/manifest-base.json'));
 const background = read('background.js');
 const content = read('content.js');
 const popupHtml = read('popup.html');

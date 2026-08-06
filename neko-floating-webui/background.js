@@ -1,3 +1,4 @@
+export function initNekoBackground() {
 const SURFACE_COMPONENT_ORDER = Object.freeze([
   'avatar',
   'chat',
@@ -1375,4 +1376,5 @@ function withTimeout(promise, timeoutMs, label) {
     }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 }

@@ -1,0 +1,32 @@
+{
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "jsx": "react-jsx",
+    "types": ["chrome"],
+    "baseUrl": ".",
+    "paths": {
+      "@/lib/popup-bridge": ["./src/browser-skill/popup-bridge.ts"],
+      "@/*": ["./vendor/browser-skill/apps/extension/src/*"],
+      "@browser-skill/i18n": ["./vendor/browser-skill/packages/i18n/src/index.ts"],
+      "@browser-skill/i18n/react": ["./vendor/browser-skill/packages/i18n/src/react.tsx"],
+      "@browser-skill/vom": ["./vendor/browser-skill/packages/vom/src/index.ts"]
+    }
+  },
+  "include": [
+    "./src/**/*.ts",
+    "./src/**/*.d.ts",
+    "./wxt.config.ts",
+    "./vendor/browser-skill/apps/extension/src/entrypoints/background.ts",
+    "./vendor/browser-skill/apps/extension/src/entrypoints/content.ts",
+    "./.wxt/wxt.d.ts"
+  ],
+  "exclude": [
+    "./dist",
+    "./vendor/browser-skill/**/__tests__/**",
+    "./vendor/browser-skill/**/*.test.ts",
+    "./vendor/browser-skill/**/*.test.tsx",
+    "./vendor/browser-skill/apps/extension/src/entrypoints/popup/**"
+  ]
+}
