@@ -148,7 +148,7 @@ test('manifest public key and MAIN-world trust anchors resolve to the same stabl
     const source = fs.readFileSync(path.join(projectRoot, fileName), 'utf8');
     assert.match(source, new RegExp(`const NEKO_EXTENSION_ORIGIN = '${NEKO_EXTENSION_ORIGIN}'`));
     assert.match(source, /window\.location\.ancestorOrigins\?\.\[0\] === NEKO_EXTENSION_ORIGIN/);
-    assert.doesNotMatch(source, /error\?*\.stack|prepareStackTrace|resolveInjectedExtensionOrigin/);
+    assert.doesNotMatch(source, /error\??\.stack|prepareStackTrace|resolveInjectedExtensionOrigin/);
     assert.doesNotMatch(source, /document\.currentScript|document\.referrer/);
   }
 });

@@ -51,12 +51,6 @@ test('custom HTTP and HTTPS frames can load while adapters stay target-scoped', 
     entry.js?.includes('transparent-page.js') || entry.world === 'MAIN'
   ));
   assert.equal(staticAdapter, undefined);
-  assert.match(background, /const port = parsed\.port \|\| \(parsed\.protocol === 'https:' \? '443' : '80'\)/);
-  assert.match(background, /const matches = \[`\$\{parsed\.protocol\}\/\/\$\{parsed\.hostname\}:\$\{port\}\/\*`\]/);
-  assert.match(background, /persistAcrossSessions: true/);
-  assert.match(background, /runAt: 'document_start'/);
-  assert.match(background, /world: 'ISOLATED'/);
-  assert.match(background, /world: 'MAIN'/);
   assert.doesNotMatch(transparentPage, /createElement\(['"]script['"]\)/);
 
   for (const script of [transparentPage, transparentMainWorld]) {

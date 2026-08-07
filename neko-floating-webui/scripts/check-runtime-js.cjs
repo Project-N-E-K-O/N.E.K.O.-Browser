@@ -203,8 +203,8 @@ const semanticGroupKeys = new Set([...expectedGroups.keys(), ...semanticGroups.k
 for (const key of semanticGroupKeys) {
   const expected = expectedGroups.get(key);
   const actual = semanticGroups.get(key);
-  const fileName = actual?.fileName || expected.fileName;
-  const code = actual?.code || expected.code;
+  const fileName = actual?.fileName ?? expected.fileName;
+  const code = actual?.code ?? expected.code;
   const difference = compareFingerprintMultisets(
     expected?.fingerprintCounts || new Map(),
     actual?.fingerprintCounts || new Map()

@@ -44,6 +44,7 @@ function isStableFingerprintScope(ts, node, sourceFile) {
 
 const nodeTextSignatureCache = new WeakMap();
 const stableScopeOrdinalCache = new WeakMap();
+const directNestedScopesCache = new WeakMap();
 
 function getEnclosingFingerprintScope(ts, node) {
   let current = node.parent;
@@ -55,6 +56,9 @@ function getEnclosingFingerprintScope(ts, node) {
 }
 
 function getDirectNestedFingerprintScopes(ts, enclosingScope) {
+  const cached = directNestedScopesCache.get(enclosingScope);
+  if (cached) return cached;
+
   const scopes = [];
   function visit(node) {
     ts.forEachChild(node, (child) => {
@@ -66,6 +70,7 @@ function getDirectNestedFingerprintScopes(ts, enclosingScope) {
     });
   }
   visit(enclosingScope);
+  directNestedScopesCache.set(enclosingScope, scopes);
   return scopes;
 }
 

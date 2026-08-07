@@ -1264,6 +1264,8 @@ async function prepareWebuiContentScripts(webuiUrl) {
     await syncWebuiContentScripts(normalized);
     return normalized;
   }
+  // Do not call this no-argument branch from inside a webuiUrlTransition task:
+  // queueing behind its own in-flight predecessor would deadlock the transition.
   return queueWebuiUrlTransition(async () => {
     const stored = await getStoredState();
     const persistedWebuiUrl = normalizeNekoUrl(stored.webuiUrl) || DEFAULT_STATE.webuiUrl;
