@@ -1757,4 +1757,68 @@ function isPcmRouteOwner(route, sender) {
 function isOffscreenSender(sender) {
   return sender?.url === chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH) && !sender.tab;
 }
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'NEKO_GET_CURRENT_PAGE_COOKIES') {
+    return false;
+  }
+  if (!isExtensionPageSender(sender)) {
+    sendResponse({ ok: false, error: '仅扩展页面可以读取当前页面 Cookies。' });
+    return false;
+  }
+  getCurrentPageCookies(message.windowId)
+    .then(sendResponse)
+    .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+  return true;
+});
+
+function isExtensionPageSender(sender) {
+  return sender?.id === chrome.runtime.id && !sender.tab;
+}
+
+async function getCurrentPageCookies(windowId, deps = {}) {
+  const tabsApi = deps.tabs || chrome.tabs;
+  const cookiesApi = deps.cookies || chrome.cookies;
+  const normalizedWindowId = normalizeWindowId(windowId);
+  const query = normalizedWindowId === null
+    ? { active: true, lastFocusedWindow: true }
+    : { active: true, windowId: normalizedWindowId };
+  const [tab] = await tabsApi.query(query);
+  const pageUrl = typeof tab?.url === 'string' ? tab.url : '';
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(pageUrl);
+  } catch {
+    throw new Error('无法确定当前页面地址。');
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('当前页面不支持读取 Cookies，请打开 HTTP 或 HTTPS 页面后重试。');
+  }
+
+  if (!Number.isInteger(tab?.id)) {
+    throw new Error('无法确定当前标签页。');
+  }
+  const stores = await cookiesApi.getAllCookieStores();
+  const currentStore = stores.find((store) => store.tabIds.includes(tab.id));
+  if (!currentStore) {
+    throw new Error('无法确定当前标签页的 Cookie 存储区。');
+  }
+  const cookies = await cookiesApi.getAll({
+    url: parsedUrl.toString(),
+    storeId: currentStore.id
+  });
+  return {
+    ok: true,
+    page: {
+      title: typeof tab?.title === 'string' ? tab.title : '',
+      url: parsedUrl.toString()
+    },
+    cookieCount: cookies.length,
+    cookieEntries: cookies.map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value
+    })),
+    cookieHeader: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+  };
+}
 }

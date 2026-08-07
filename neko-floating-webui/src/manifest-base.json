@@ -29,6 +29,7 @@
   "permissions": [
     "activeTab",
     "alarms",
+    "cookies",
     "debugger",
     "idle",
     "notifications",
@@ -53,7 +54,7 @@
     {
       "resources": [
         "floating-frame.html",
-        "assets/cat-idle-cat1.gif"
+        "assets/cat-idle-cat1.webp"
       ],
       "matches": ["<all_urls>"]
     }

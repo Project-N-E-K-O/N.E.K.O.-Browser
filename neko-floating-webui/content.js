@@ -8,7 +8,7 @@
   const MINIMIZED_SIZE = { width: 96, height: 96 };
   const MIN_SIZE = { width: 320, height: 420 };
   const WAKE_DRAG_THRESHOLD = 4;
-  const WAKE_IMAGE_URL = chrome.runtime.getURL('assets/cat-idle-cat1.gif');
+  const WAKE_IMAGE_URL = chrome.runtime.getURL('assets/cat-idle-cat1.webp');
   const FRAME_BRIDGE_URL = chrome.runtime.getURL('floating-frame.html');
   const FRAME_BRIDGE_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
   const FRAME_BRIDGE_SENDER = 'neko-floating-frame-bridge';
