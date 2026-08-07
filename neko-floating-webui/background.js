@@ -175,7 +175,9 @@ async function handleActionClick(tab) {
     return;
   }
 
-  await activatePanelInTab(tab.id);
+  if (!await activatePanelInTab(tab.id)) {
+    return;
+  }
   const response = await sendTabMessage(tab.id, { type: 'NEKO_OPEN_SINGLETON' });
   await chrome.storage.local.set({
     activeTabId: response?.awake ? tab.id : null,
@@ -626,7 +628,10 @@ async function setDisplayMode(mode) {
   }
 
   if (transferCollapsedFloatingToFullscreen) {
-    await activatePanelInTab(tab.id, { avatarForm: 'cat' });
+    const activated = await activatePanelInTab(tab.id, { avatarForm: 'cat' });
+    if (!activated) {
+      return { ok: true, mode, transferred: false };
+    }
   }
 
   const applyResponse = await sendTabMessage(tab.id, {
@@ -661,7 +666,10 @@ async function setDisplayMode(mode) {
   }
 
   if (!transferCollapsedFloatingToFullscreen) {
-    await activatePanelInTab(tab.id);
+    const activated = await activatePanelInTab(tab.id);
+    if (!activated) {
+      return { ok: true, mode, transferred: false };
+    }
   }
   const response = await sendTabMessage(tab.id, { type: 'NEKO_OPEN_SINGLETON' });
   await chrome.storage.local.set({
@@ -822,14 +830,16 @@ async function autoAttachPanel(tabId) {
   }
 
   if (state.minimized === false && tab?.active && isInjectableTab(tab.url, state.webuiUrl)) {
-    await activatePanelInTab(tabId, {
+    const activated = await activatePanelInTab(tabId, {
       avatarForm: state.fullscreenFromCollapsedFloating === true ? 'cat' : 'model'
     });
-    return {
-      ok: true,
-      minimized: false,
-      awake: true
-    };
+    if (activated) {
+      return {
+        ok: true,
+        minimized: false,
+        awake: true
+      };
+    }
   }
 
   return {
@@ -849,7 +859,13 @@ async function wakePanelInTab(tabId) {
       awake: false
     };
   }
-  await activatePanelInTab(tabId);
+  if (!await activatePanelInTab(tabId)) {
+    return {
+      ok: false,
+      minimized: true,
+      awake: false
+    };
+  }
 
   return {
     ok: true,
@@ -974,6 +990,19 @@ async function performPanelSyncToTab(tabId, syncSeq) {
 async function activatePanelInTab(tabId, options = {}) {
   const state = await getStoredState();
   if (state.displayMode === 'sidebar') {
+    return false;
+  }
+  const tab = await getTab(tabId);
+  if (!tab || !isInjectableTab(tab.url, state.webuiUrl)) {
+    await sendTabMessage(tabId, { type: 'NEKO_FORCE_CLOSE' });
+    if (state.activeTabId === tabId) {
+      await chrome.storage.local.set({
+        activeTabId: null,
+        minimized: true,
+        avatarForm: 'cat',
+        fullscreenFromCollapsedFloating: false
+      });
+    }
     return false;
   }
   const activeTabId = await getLiveActiveTabId(state);
@@ -1174,6 +1203,7 @@ function setWebuiUrl(value) {
       throw transitionError;
     }
 
+    await broadcastWebuiUrl(webuiUrl);
     const activeTabId = await getLiveActiveTabId(state);
     if (activeTabId !== null) {
       const activeTab = await getTab(activeTabId);
@@ -1185,15 +1215,19 @@ function setWebuiUrl(value) {
           avatarForm: 'cat',
           fullscreenFromCollapsedFloating: false
         });
-      } else {
-        await sendTabMessage(activeTabId, {
-          type: 'NEKO_APPLY_WEBUI_URL',
-          webuiUrl
-        });
       }
     }
     return { ok: true, webuiUrl };
   });
+}
+
+async function broadcastWebuiUrl(webuiUrl) {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  await Promise.all(tabs.map((tab) => (
+    typeof tab.id === 'number'
+      ? sendTabMessage(tab.id, { type: 'NEKO_APPLY_WEBUI_URL', webuiUrl })
+      : null
+  )));
 }
 
 async function getLiveActiveTabId(state) {
@@ -1244,7 +1278,7 @@ function isLoopbackHostname(hostname) {
   const normalized = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   return normalized === 'localhost'
     || normalized === '::1'
-    || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+    || normalized === '127.0.0.1';
 }
 
 function normalizeDisplayMode(mode) {

@@ -1542,10 +1542,19 @@
   }
 
   async function wakePanel() {
+    const state = await getState();
+    if (isConfiguredFrontendPage(location.href, state.webuiUrl)) {
+      closePanel();
+      return;
+    }
     const response = await Promise.race([
       chrome.runtime.sendMessage({ type: 'NEKO_WAKE_PANEL' }).catch(() => null),
       new Promise((resolve) => setTimeout(() => resolve(null), 2000))
     ]);
+    if (response?.ok === false) {
+      closePanel();
+      return;
+    }
     setAvatarForm(response?.avatarForm, false);
     setMinimized(false, response?.ok ? false : true);
   }
@@ -2880,7 +2889,7 @@
     const normalized = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
     return normalized === 'localhost'
       || normalized === '::1'
-      || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+      || normalized === '127.0.0.1';
   }
 
   function clampNumber(value, min, max) {

@@ -33,6 +33,7 @@ test('background validates, persists, and applies the selected address', () => {
   assert.match(background, /parsed\.protocol !== 'http:' && parsed\.protocol !== 'https:'/);
   assert.match(background, /parsed\.username \|\| parsed\.password/);
   assert.match(background, /!isConfiguredFrontendPage\(page, webuiUrl\)/);
+  assert.match(background, /await broadcastWebuiUrl\(webuiUrl\)/);
 });
 
 test('floating UI treats loopback aliases as the configured N.E.K.O frontend', () => {
@@ -57,7 +58,6 @@ test('floating UI treats loopback aliases as the configured N.E.K.O frontend', (
   for (const pageUrl of [
     'http://localhost:48911/',
     'http://127.0.0.1:48911/chat',
-    'http://127.1.2.3:48911/',
     'http://[::1]:48911/'
   ]) {
     assert.equal(isInjectableTab(pageUrl, defaultState.webuiUrl), false, pageUrl);
@@ -66,6 +66,7 @@ test('floating UI treats loopback aliases as the configured N.E.K.O frontend', (
 
   for (const pageUrl of [
     'http://127.0.0.1:48912/',
+    'http://127.1.2.3:48911/',
     'https://127.0.0.1:48911/',
     'http://192.168.1.10:48911/',
     'https://example.com/'
@@ -73,6 +74,113 @@ test('floating UI treats loopback aliases as the configured N.E.K.O frontend', (
     assert.equal(isInjectableTab(pageUrl, defaultState.webuiUrl), true, pageUrl);
     assert.equal(isConfiguredFrontendPage(pageUrl, defaultState.webuiUrl), false, pageUrl);
   }
+
+  assert.equal(
+    isConfiguredFrontendPage('http://localhost:48911/', 'http://127.0.0.1:48911/'),
+    true
+  );
+  assert.equal(
+    isInjectableTab('https://example.com/path', 'https://example.com/'),
+    false
+  );
+});
+
+test('frontend URL changes reach inactive floating runtimes', async () => {
+  const sent = [];
+  const broadcastWebuiUrl = Function(
+    'chrome',
+    'sendTabMessage',
+    `return (${extractFunction(background, 'broadcastWebuiUrl')});`
+  )(
+    {
+      tabs: {
+        query: async () => [{ id: 7 }, { id: 8 }, {}]
+      }
+    },
+    async (tabId, message) => {
+      sent.push([tabId, message]);
+      return { ok: true };
+    }
+  );
+
+  await broadcastWebuiUrl('http://127.0.0.1:48911/');
+
+  assert.deepEqual(sent, [
+    [7, { type: 'NEKO_APPLY_WEBUI_URL', webuiUrl: 'http://127.0.0.1:48911/' }],
+    [8, { type: 'NEKO_APPLY_WEBUI_URL', webuiUrl: 'http://127.0.0.1:48911/' }]
+  ]);
+});
+
+test('panel activation fails closed on the configured frontend', async () => {
+  const storageWrites = [];
+  const sent = [];
+  let enforced = false;
+  const activatePanelInTab = Function(
+    'getStoredState',
+    'getTab',
+    'isInjectableTab',
+    'sendTabMessage',
+    'chrome',
+    'getLiveActiveTabId',
+    'minimizeTabPanel',
+    'enforceSingleActivePanel',
+    `return (${extractFunction(background, 'activatePanelInTab')});`
+  )(
+    async () => ({
+      displayMode: 'floating',
+      activeTabId: 7,
+      webuiUrl: 'http://localhost:48911/'
+    }),
+    async () => ({ id: 7, url: 'http://127.0.0.1:48911/' }),
+    () => false,
+    async (tabId, message) => { sent.push([tabId, message]); },
+    { storage: { local: { set: async (value) => { storageWrites.push(value); } } } },
+    async () => 7,
+    async () => {},
+    async () => { enforced = true; }
+  );
+
+  assert.equal(await activatePanelInTab(7), false);
+  assert.deepEqual(sent, [[7, { type: 'NEKO_FORCE_CLOSE' }]]);
+  assert.deepEqual(storageWrites, [{
+    activeTabId: null,
+    minimized: true,
+    avatarForm: 'cat',
+    fullscreenFromCollapsedFloating: false
+  }]);
+  assert.equal(enforced, false);
+});
+
+test('a stale wake control removes itself on the configured frontend', async () => {
+  let closed = 0;
+  let messages = 0;
+  let expanded = 0;
+  const wakePanel = Function(
+    'getState',
+    'isConfiguredFrontendPage',
+    'location',
+    'closePanel',
+    'chrome',
+    'setAvatarForm',
+    'setMinimized',
+    'setTimeout',
+    `return (${extractFunction(content, 'wakePanel')});`
+  )(
+    async () => ({ webuiUrl: 'http://localhost:48911/' }),
+    () => true,
+    { href: 'http://127.0.0.1:48911/' },
+    () => { closed += 1; },
+    { runtime: { sendMessage: async () => { messages += 1; } } },
+    () => {},
+    () => { expanded += 1; },
+    setTimeout
+  );
+
+  await wakePanel();
+
+  assert.equal(closed, 1);
+  assert.equal(messages, 0);
+  assert.equal(expanded, 0);
 });
 
 test('floating and side panel surfaces reload when the address changes', () => {
