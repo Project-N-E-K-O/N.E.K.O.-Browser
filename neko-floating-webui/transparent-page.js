@@ -12,7 +12,7 @@
 
   const TRANSPARENT_CLASS = 'neko-floating-webui-transparent';
   const STYLE_ID = 'neko-floating-webui-transparent-runtime-style';
-  const MAIN_WORLD_SCRIPT_ID = 'neko-floating-webui-transparent-main-world';
+  const injectedMainWorldScripts = new Set();
   const REFLOW_RETRY_INTERVAL_MS = 250;
   const REFLOW_RETRY_MAX_WAIT_MS = 10000;
   const SIDEPANEL_THEME_MESSAGE = 'NEKO_SIDEBAR_THEME';
@@ -56,7 +56,7 @@
     }
 
     ensureRuntimeStyle();
-    injectMainWorldScript();
+    injectMainWorldScripts();
   };
 
   if (document.readyState === 'loading') {
@@ -212,15 +212,23 @@
     target.appendChild(style);
   }
 
-  function injectMainWorldScript() {
-    if (document.getElementById(MAIN_WORLD_SCRIPT_ID)) {
-      return;
+  function injectMainWorldScripts() {
+    injectMainWorldScript('transparent-main-world.js');
+    if (isEmbeddedSurface) {
+      injectMainWorldScript('embedded-surface-main-world.js');
     }
+  }
+
+  function injectMainWorldScript(fileName) {
+    if (injectedMainWorldScripts.has(fileName)) return;
+    injectedMainWorldScripts.add(fileName);
 
     const script = document.createElement('script');
-    script.id = MAIN_WORLD_SCRIPT_ID;
-    script.src = chrome.runtime.getURL('transparent-main-world.js');
-    script.onload = () => script.remove();
+    script.src = chrome.runtime.getURL(fileName);
+    script.async = false;
+    const removeScript = () => script.remove();
+    script.addEventListener('load', removeScript, { once: true });
+    script.addEventListener('error', removeScript, { once: true });
     (document.head || document.documentElement).appendChild(script);
   }
 

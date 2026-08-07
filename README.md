@@ -158,6 +158,9 @@ pnpm compile   # WXT prepare + 运行时 JavaScript 与 TypeScript 检查
 pnpm build     # 生产构建
 ```
 
+运行时 JavaScript 检查会阻止新增的类型赋值、属性和参数错误。现有类型债务记录在
+`scripts/runtime-semantic-baseline.json`；修复旧诊断后应同步下调基线，不能提高基线绕过检查。
+
 提交前应运行：
 
 ```powershell

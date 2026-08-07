@@ -104,7 +104,6 @@
     let fixedChatMode = normalizeChatMode(initialChatMode);
     let embeddedDisplayMode = null;
     let pageChatMode = null;
-    let connectedParentOrigin = extensionParentOrigin;
     let regionFrame = 0;
     let chatVisibilityFrame = 0;
     let chatVisibilityPending = false;
@@ -135,16 +134,30 @@
     const modelPanDragStates = new WeakMap();
 
     function resolveExtensionParentOrigin() {
+        const extensionOrigin = resolveCurrentScriptExtensionOrigin();
+        if (!extensionOrigin) return '';
         const candidates = [window.location.ancestorOrigins?.[0], document.referrer];
         for (const candidate of candidates) {
             if (!candidate) continue;
             try {
                 const parent = new URL(candidate);
-                if (parent.protocol === 'chrome-extension:' && parent.host) {
-                    return `chrome-extension://${parent.host}`;
+                if (`${parent.protocol}//${parent.host}` === extensionOrigin) {
+                    return extensionOrigin;
                 }
             } catch (_) {}
         }
+        return '';
+    }
+
+    function resolveCurrentScriptExtensionOrigin() {
+        const source = document.currentScript?.getAttribute('src');
+        if (!source) return '';
+        try {
+            const scriptUrl = new URL(source);
+            if (scriptUrl.protocol === 'chrome-extension:' && scriptUrl.host) {
+                return `chrome-extension://${scriptUrl.host}`;
+            }
+        } catch (_) {}
         return '';
     }
 
@@ -1759,13 +1772,12 @@
 
     function postToParent(type, payload) {
         if (window.parent === window) return;
-        const targetOrigin = connectedParentOrigin || '*';
         try {
             window.parent.postMessage(Object.assign({
                 type,
                 protocolVersion: PROTOCOL_VERSION,
                 _sender: 'neko-embedded-surface'
-            }, payload || {}), targetOrigin);
+            }, payload || {}), extensionParentOrigin);
         } catch (_) {}
     }
 

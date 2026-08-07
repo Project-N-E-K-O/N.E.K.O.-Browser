@@ -435,17 +435,31 @@
   }
 
   function resolveFloatingBridgeOrigin() {
+    const extensionOrigin = resolveCurrentScriptExtensionOrigin();
+    if (!extensionOrigin) return '';
     const ancestorOrigin = window.location.ancestorOrigins?.[0];
     const candidates = [ancestorOrigin, document.referrer];
     for (const candidate of candidates) {
       if (!candidate) continue;
       try {
         const referrer = new URL(candidate);
-        if (referrer.protocol === 'chrome-extension:' && referrer.host) {
-          return `chrome-extension://${referrer.host}`;
+        if (`${referrer.protocol}//${referrer.host}` === extensionOrigin) {
+          return extensionOrigin;
         }
       } catch {}
     }
+    return '';
+  }
+
+  function resolveCurrentScriptExtensionOrigin() {
+    const source = document.currentScript?.getAttribute('src');
+    if (!source) return '';
+    try {
+      const scriptUrl = new URL(source);
+      if (scriptUrl.protocol === 'chrome-extension:' && scriptUrl.host) {
+        return `chrome-extension://${scriptUrl.host}`;
+      }
+    } catch {}
     return '';
   }
 

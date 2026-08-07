@@ -47,12 +47,16 @@ test('custom HTTP and HTTPS frames can load while adapters stay target-scoped', 
   assert.match(manifest.content_security_policy.extension_pages, /frame-src http: https:/);
 
   const isolated = manifest.content_scripts.find((entry) => entry.js?.includes('transparent-page.js'));
-  const mainWorld = manifest.content_scripts.find((entry) => entry.js?.includes('transparent-main-world.js'));
-  for (const entry of [isolated, mainWorld]) {
-    assert.ok(entry.matches.includes('http://*/*'));
-    assert.ok(entry.matches.includes('https://*/*'));
-    assert.equal(entry.all_frames, true);
-  }
+  assert.ok(isolated.matches.includes('http://*/*'));
+  assert.ok(isolated.matches.includes('https://*/*'));
+  assert.equal(isolated.all_frames, true);
+  assert.equal(
+    manifest.content_scripts.some((entry) => entry.world === 'MAIN'),
+    false,
+    'MAIN-world adapters must be injected only after isolated extension-origin authorization'
+  );
+  assert.match(transparentPage, /injectMainWorldScript\('transparent-main-world\.js'\)/);
+  assert.match(transparentPage, /injectMainWorldScript\('embedded-surface-main-world\.js'\)/);
 
   for (const script of [transparentPage, transparentMainWorld]) {
     assert.match(script, /params\)\.get\('surface'\)|URLSearchParams\(location\.search\)\.get\('surface'\)/);

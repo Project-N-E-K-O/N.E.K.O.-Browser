@@ -8,6 +8,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
 const manifest = JSON.parse(read('src/manifest-base.json'));
 const adapter = read('embedded-surface-main-world.js');
+const transparentPage = read('transparent-page.js');
 const css = read('embedded-surface.css');
 
 function functionBlock(name, nextName) {
@@ -28,18 +29,23 @@ test('the extension owns and injects the embedded surface adapter', () => {
   ));
   const isolated = webScripts.find((entry) => entry.js?.includes('transparent-page.js'));
   const mainWorld = webScripts.find((entry) => entry.world === 'MAIN');
+  const resources = manifest.web_accessible_resources.flatMap((entry) => entry.resources || []);
 
   assert.ok(isolated?.css?.includes('embedded-surface.css'));
-  assert.ok(mainWorld?.js?.includes('embedded-surface-main-world.js'));
-  assert.equal(mainWorld.run_at, 'document_start');
-  assert.equal(mainWorld.all_frames, true);
+  assert.equal(mainWorld, undefined, 'MAIN-world code must not run before isolated authorization');
+  assert.ok(resources.includes('embedded-surface-main-world.js'));
+  assert.match(transparentPage, /injectMainWorldScript\('embedded-surface-main-world\.js'\)/);
 });
 
-test('the adapter requires both the embed marker and an extension parent', () => {
+test('the adapter requires the embed marker and its injector\'s exact extension origin', () => {
   assert.match(adapter, /params\.get\('surface'\)/);
   assert.match(adapter, /surface !== 'embed'/);
   assert.match(adapter, /!extensionParentOrigin/);
+  assert.match(adapter, /document\.currentScript\?\.getAttribute\('src'\)/);
+  assert.match(adapter, /`\$\{parent\.protocol\}\/\/\$\{parent\.host\}` === extensionOrigin/);
   assert.match(adapter, /event\.origin !== extensionParentOrigin/);
+  assert.match(adapter, /window\.parent\.postMessage\([\s\S]*?extensionParentOrigin\)/);
+  assert.doesNotMatch(adapter, /window\.parent\.postMessage\([\s\S]*?['"]\*['"]\s*\)/);
   assert.match(adapter, /params\.get\('components'\)/);
   assert.match(adapter, /document\.documentElement\.classList\.add\('neko-embedded-surface'\)/);
   assert.doesNotMatch(adapter, /__NEKO_EMBEDDED_SURFACE_CONFIG__/);

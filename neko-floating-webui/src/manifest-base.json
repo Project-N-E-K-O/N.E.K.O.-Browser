@@ -53,13 +53,6 @@
       "js": ["transparent-page.js"],
       "run_at": "document_start",
       "all_frames": true
-    },
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["transparent-main-world.js", "embedded-surface-main-world.js"],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [
@@ -67,6 +60,7 @@
       "resources": [
         "transparent-page.css",
         "transparent-main-world.js",
+        "embedded-surface-main-world.js",
         "floating-frame.html",
         "assets/cat-idle-cat1.gif"
       ],

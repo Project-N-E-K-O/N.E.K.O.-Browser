@@ -1,0 +1,10 @@
+{
+  "background.js": { "2322": 2, "2339": 13 },
+  "content.js": { "2339": 3 },
+  "embedded-surface-main-world.js": { "2339": 60 },
+  "floating-frame.js": { "2339": 10 },
+  "mic-permission.js": { "2339": 2 },
+  "popup.js": { "2339": 47, "2345": 1 },
+  "sidepanel.js": { "2339": 12 },
+  "transparent-main-world.js": { "2339": 22 }
+}

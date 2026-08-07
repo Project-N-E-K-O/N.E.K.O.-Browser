@@ -65,9 +65,8 @@ test('the bridge transfers the microphone port instead of cloning it', () => {
   assert.match(content, /postFrameBridgeMessage\(\{[\s\S]*?type: 'NEKO_PCM_PORT'[\s\S]*?\}, \[channel\.port2\]\)/);
   assert.match(bridge, /Array\.from\(event\.ports \|\| \[\]\)/);
   assert.match(bridge, /data\.type\.startsWith\('NEKO_PCM_'\) && data\._sender === 'floating'/);
-  assert.match(transparentMainWorld, /window\.location\.ancestorOrigins\?\.\[0\]/);
-  assert.match(transparentMainWorld, /referrer\.protocol === 'chrome-extension:'/);
-  assert.match(transparentMainWorld, /`chrome-extension:\/\/\$\{referrer\.host\}`/);
+  assert.match(transparentMainWorld, /document\.currentScript\?\.getAttribute\('src'\)/);
+  assert.match(transparentMainWorld, /`\$\{referrer\.protocol\}\/\/\$\{referrer\.host\}` === extensionOrigin/);
   assert.match(transparentMainWorld, /event\.origin === FLOATING_BRIDGE_ORIGIN/);
   assert.match(transparentMainWorld, /window\.parent\.postMessage\([\s\S]*?FLOATING_BRIDGE_ORIGIN\)/);
   assert.doesNotMatch(
