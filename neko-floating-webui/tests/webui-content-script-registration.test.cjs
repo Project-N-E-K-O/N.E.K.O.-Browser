@@ -120,7 +120,7 @@ function harnessFor(scripting) {
 }
 
 test('manifest leaves WebUI adapters to target-scoped dynamic registrations', () => {
-  const staticFiles = manifest.content_scripts.flatMap((entry) => [
+  const staticFiles = (manifest.content_scripts || []).flatMap((entry) => [
     ...(entry.js || []),
     ...(entry.css || [])
   ]);
@@ -203,12 +203,15 @@ test('registrar creates missing scripts, updates stale scripts, and skips identi
 
 test('registrar serializes URL changes and recovers after an API failure', async () => {
   let releaseFirst;
+  let markFirstEntered;
+  const firstEntered = new Promise((resolve) => { markFirstEntered = resolve; });
   let getCalls = 0;
   const scripting = createScripting();
   const originalGet = scripting.getRegisteredContentScripts;
   scripting.getRegisteredContentScripts = async function getRegisteredContentScripts(filter) {
     getCalls += 1;
     if (getCalls === 1) {
+      markFirstEntered();
       await new Promise((resolve) => { releaseFirst = resolve; });
       throw new Error('transient failure');
     }
@@ -218,7 +221,7 @@ test('registrar serializes URL changes and recovers after an API failure', async
 
   const first = sync('http://old.example:4800/');
   const second = sync('http://new.example:4900/');
-  await Promise.resolve();
+  await firstEntered;
   assert.equal(getCalls, 1, 'the second sync must wait for the first');
   releaseFirst();
   await assert.rejects(first, /transient failure/);

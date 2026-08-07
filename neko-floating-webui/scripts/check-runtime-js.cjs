@@ -73,9 +73,8 @@ function getDiagnosticSourceLine(diagnostic) {
   if (!diagnostic.file || diagnostic.start === undefined) return '';
   const { line } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
   const lineStart = diagnostic.file.getPositionOfLineAndCharacter(line, 0);
-  const lineEnd = line + 1 < diagnostic.file.getLineAndCharacterOfPosition(
-    diagnostic.file.getEnd()
-  ).line + 1
+  const lastLine = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.file.getEnd()).line;
+  const lineEnd = line < lastLine
     ? diagnostic.file.getPositionOfLineAndCharacter(line + 1, 0)
     : diagnostic.file.getEnd();
   return diagnostic.file.text.slice(lineStart, lineEnd).trim().replace(/\s+/g, ' ');

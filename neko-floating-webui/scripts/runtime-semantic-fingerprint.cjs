@@ -142,6 +142,12 @@ function getStructuralChildSegment(ts, parent, child, sourceFile) {
 }
 
 function createDiagnosticEnclosingContext(ts, sourceFile, position) {
+  if (typeof ts.getTokenAtPosition !== 'function') {
+    throw new Error(
+      'ts.getTokenAtPosition is unavailable; the installed TypeScript version is incompatible '
+      + 'with the runtime semantic fingerprint baseline.'
+    );
+  }
   const token = ts.getTokenAtPosition(sourceFile, position);
   const scopes = [];
   const syntaxPath = [];

@@ -8,7 +8,13 @@ const {
   compareFingerprintMultisets
 } = require('../scripts/runtime-semantic-fingerprint.cjs');
 
-function fingerprint(sourceLine, enclosingContext = 'SourceFile > function:first') {
+const DEFAULT_CONTEXT = {
+  scopes: ['FunctionDeclaration:first#0'],
+  syntaxPath: [],
+  structuralPath: []
+};
+
+function fingerprint(sourceLine, enclosingContext = DEFAULT_CONTEXT) {
   return createDiagnosticFingerprint({
     fileName: 'popup.js',
     code: 2339,
@@ -17,6 +23,13 @@ function fingerprint(sourceLine, enclosingContext = 'SourceFile > function:first
     enclosingContext
   });
 }
+
+test('an incompatible TypeScript compiler fails with an explicit message', () => {
+  assert.throws(
+    () => createDiagnosticEnclosingContext({}, null, 0),
+    /installed TypeScript version is incompatible/
+  );
+});
 
 test('TypeScript AST context distinguishes the same source line across functions', () => {
   const repeatedLine = 'const value = node.value;';
