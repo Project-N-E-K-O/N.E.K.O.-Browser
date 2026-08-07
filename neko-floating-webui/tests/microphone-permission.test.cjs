@@ -99,8 +99,12 @@ test('PCM capture is reachable only through the extension-owned floating frame r
   const extensionOrigin = 'chrome-extension://test-extension/';
   const isOffscreenSender = Function(
     'chrome',
+    'OFFSCREEN_DOCUMENT_PATH',
     `${extractFunction(background, 'isOffscreenSender')}; return isOffscreenSender;`
-  )({ runtime: { getURL: (path) => extensionOrigin + path } });
+  )(
+    { runtime: { getURL: (path) => extensionOrigin + path } },
+    'offscreen.html'
+  );
   const offscreenUrl = extensionOrigin + 'offscreen.html';
 
   assert.equal(isOffscreenSender({ url: offscreenUrl }), true);
@@ -128,15 +132,17 @@ test('PCM relay lifetime follows the returned track instead of input volume', ()
     audioContext: { close: () => { contextCloses += 1; } }
   };
   requests.set('request', entry);
+  const clearedTimers = [];
   const cleanup = new Function(
     'pcmRelayRequests',
     'window',
     `return (${extractFunction(transparentMainWorld, 'cleanupPcmRelay')});`
-  )(requests, { clearTimeout() {} });
+  )(requests, { clearTimeout(timer) { clearedTimers.push(timer); } });
 
   cleanup('request');
   assert.equal(entry.closed, true);
   assert.equal(requests.size, 0);
+  assert.deepEqual(clearedTimers, [1, 2]);
   assert.equal(trackStops, 1);
   assert.equal(contextCloses, 1);
   assert.equal(entry.outputTrack.onended, null);

@@ -1344,7 +1344,7 @@ function createWebuiContentScriptRegistrar(scripting) {
 }
 
 function queueWebuiUrlTransition(task) {
-  const transition = webuiUrlTransition.then(task);
+  const transition = webuiUrlTransition.then(task, task);
   webuiUrlTransition = transition.then(() => {}, () => {});
   return transition;
 }
@@ -1468,7 +1468,9 @@ async function stopPcmRoutesForTab(tabId) {
 
 async function stopOffscreenPcmSession(requestId) {
   try {
-    await ensureOffscreen();
+    if (!await hasExistingOffscreenDocument()) {
+      return;
+    }
     await sendOffscreenMessage({
       type: 'NEKO_PCM_STOP',
       requestId
@@ -1697,6 +1699,6 @@ function isPcmRouteOwner(route, sender) {
 }
 
 function isOffscreenSender(sender) {
-  return sender?.url === chrome.runtime.getURL('offscreen.html') && !sender.tab;
+  return sender?.url === chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH) && !sender.tab;
 }
 }

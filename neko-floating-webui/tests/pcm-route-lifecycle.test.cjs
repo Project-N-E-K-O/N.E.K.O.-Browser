@@ -6,10 +6,17 @@ const { extractFunction } = require('./helpers/extract-function.cjs');
 
 const background = fs.readFileSync(path.resolve(__dirname, '..', 'background.js'), 'utf8');
 
-function createHarness(mediaRoutes, ensureOffscreen, sendOffscreenMessage, logger = null) {
+function createHarness(
+  mediaRoutes,
+  ensureOffscreen,
+  sendOffscreenMessage,
+  logger = null,
+  hasExistingOffscreenDocument = () => Promise.resolve(true)
+) {
   return new Function(
     'mediaRoutes',
     'ensureOffscreen',
+    'hasExistingOffscreenDocument',
     'sendOffscreenMessage',
     'console',
     `${extractFunction(background, 'handlePcmStart')}
@@ -22,6 +29,7 @@ function createHarness(mediaRoutes, ensureOffscreen, sendOffscreenMessage, logge
   )(
     mediaRoutes,
     ensureOffscreen,
+    hasExistingOffscreenDocument,
     sendOffscreenMessage,
     logger || { log() {}, warn() {} }
   );
@@ -31,6 +39,7 @@ test('PCM routes roll back when startup or shutdown cannot reach offscreen', asy
   const mediaRoutes = new Map();
   let ensureError = new Error('offscreen unavailable');
   let startError = null;
+  let stopError = null;
   const warnings = [];
   const harness = createHarness(
     mediaRoutes,
@@ -38,6 +47,9 @@ test('PCM routes roll back when startup or shutdown cannot reach offscreen', asy
     (message) => {
       if (message.type === 'NEKO_PCM_START' && startError) {
         return Promise.reject(startError);
+      }
+      if (message.type === 'NEKO_PCM_STOP' && stopError) {
+        return Promise.reject(stopError);
       }
       return Promise.resolve({ ok: true });
     },
@@ -65,12 +77,39 @@ test('PCM routes roll back when startup or shutdown cannot reach offscreen', asy
   startError = null;
   await harness.handlePcmStart({ requestId: 'stop-failure', fromFloating: true }, sender);
   assert.equal(mediaRoutes.has('stop-failure'), true);
-  ensureError = new Error('offscreen stopped responding');
+  stopError = new Error('offscreen stopped responding');
   await harness.handlePcmStop({ requestId: 'stop-failure' }, sender);
   assert.equal(mediaRoutes.has('stop-failure'), false);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].join(' '), /stop-failure/);
   assert.match(warnings[0].join(' '), /offscreen stopped responding/);
+});
+
+test('stopping PCM does not create an absent offscreen document', async () => {
+  const mediaRoutes = new Map([
+    ['stale-route', { extensionPage: true, tabId: 7, frameId: 0 }]
+  ]);
+  let ensureCalls = 0;
+  let sentMessages = 0;
+  const harness = createHarness(
+    mediaRoutes,
+    () => {
+      ensureCalls += 1;
+      return Promise.resolve();
+    },
+    () => {
+      sentMessages += 1;
+      return Promise.resolve({ ok: true });
+    },
+    null,
+    () => Promise.resolve(false)
+  );
+
+  await harness.stopPcmRoutesForTab(7);
+
+  assert.equal(mediaRoutes.size, 0);
+  assert.equal(ensureCalls, 0);
+  assert.equal(sentMessages, 0);
 });
 
 test('PCM is globally singleton and only its owning tab and frame can stop it', async () => {
