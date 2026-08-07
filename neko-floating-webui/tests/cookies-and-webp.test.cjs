@@ -39,9 +39,17 @@ test('current-page cookie reader targets the active tab in the popup window', as
   const getCurrentPageCookies = createCookieReader();
   const queries = [];
   const cookieQueries = [];
+  const partitionKeyQueries = [];
+  const partitionKey = {
+    topLevelSite: 'https://example.com',
+    hasCrossSiteAncestor: false
+  };
   const cookies = [
     { name: 'session', value: 'secret', httpOnly: true },
     { name: 'csrf', value: 'a=b', httpOnly: false }
+  ];
+  const partitionedCookies = [
+    { name: 'partitioned-session', value: 'partition-secret', partitionKey }
   ];
   const response = await getCurrentPageCookies(7, {
     tabs: {
@@ -57,27 +65,40 @@ test('current-page cookie reader targets the active tab in the popup window', as
           { id: '1', tabIds: [42] }
         ];
       },
+      async getPartitionKey(query) {
+        partitionKeyQueries.push(query);
+        return { partitionKey };
+      },
       async getAll(query) {
         cookieQueries.push(query);
-        return cookies;
+        return query.partitionKey ? partitionedCookies : cookies;
       }
     }
   });
 
   assert.deepEqual(queries, [{ active: true, windowId: 7 }]);
-  assert.deepEqual(cookieQueries, [{
-    url: 'https://example.com/path?q=1',
-    storeId: '1'
-  }]);
+  assert.deepEqual(partitionKeyQueries, [{ tabId: 42, frameId: 0 }]);
+  assert.deepEqual(cookieQueries, [
+    {
+      url: 'https://example.com/path?q=1',
+      storeId: '1'
+    },
+    {
+      url: 'https://example.com/path?q=1',
+      storeId: '1',
+      partitionKey
+    }
+  ]);
   assert.deepEqual(response, {
     ok: true,
     page: { title: 'Example', url: 'https://example.com/path?q=1' },
-    cookieCount: 2,
+    cookieCount: 3,
     cookieEntries: [
       { name: 'session', value: 'secret' },
-      { name: 'csrf', value: 'a=b' }
+      { name: 'csrf', value: 'a=b' },
+      { name: 'partitioned-session', value: 'partition-secret' }
     ],
-    cookieHeader: 'session=secret; csrf=a=b'
+    cookieHeader: 'session=secret; csrf=a=b; partitioned-session=partition-secret'
   });
 });
 

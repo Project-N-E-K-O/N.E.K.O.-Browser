@@ -1803,10 +1803,19 @@ async function getCurrentPageCookies(windowId, deps = {}) {
   if (!currentStore) {
     throw new Error('无法确定当前标签页的 Cookie 存储区。');
   }
-  const cookies = await cookiesApi.getAll({
+  const cookieQuery = {
     url: parsedUrl.toString(),
     storeId: currentStore.id
+  };
+  const [unpartitionedCookies, partitionKeyResult] = await Promise.all([
+    cookiesApi.getAll(cookieQuery),
+    cookiesApi.getPartitionKey({ tabId: tab.id, frameId: 0 })
+  ]);
+  const partitionedCookies = await cookiesApi.getAll({
+    ...cookieQuery,
+    partitionKey: partitionKeyResult.partitionKey
   });
+  const cookies = [...unpartitionedCookies, ...partitionedCookies];
   return {
     ok: true,
     page: {
