@@ -1217,12 +1217,34 @@ function isInjectableTab(url, webuiUrl) {
   }
   try {
     const page = new URL(url);
-    const frontend = new URL(normalizeNekoUrl(webuiUrl) || DEFAULT_STATE.webuiUrl);
     return (page.protocol === 'http:' || page.protocol === 'https:')
-      && page.origin !== frontend.origin;
+      && !isConfiguredFrontendPage(page, webuiUrl);
   } catch {
     return false;
   }
+}
+
+function isConfiguredFrontendPage(pageUrl, frontendUrl) {
+  try {
+    const page = pageUrl instanceof URL ? pageUrl : new URL(pageUrl);
+    const frontend = new URL(normalizeNekoUrl(frontendUrl) || DEFAULT_STATE.webuiUrl);
+    if (page.origin === frontend.origin) {
+      return true;
+    }
+    return page.protocol === frontend.protocol
+      && page.port === frontend.port
+      && isLoopbackHostname(page.hostname)
+      && isLoopbackHostname(frontend.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === 'localhost'
+    || normalized === '::1'
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized);
 }
 
 function normalizeDisplayMode(mode) {

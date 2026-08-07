@@ -55,10 +55,13 @@
     return;
   }
 
-  if (window.__nekoFloatingWebuiLoaded) {
+  const nekoWindow = /** @type {Window & typeof globalThis & {
+   *   __nekoFloatingWebuiLoaded?: boolean
+   * }} */ (window);
+  if (nekoWindow.__nekoFloatingWebuiLoaded) {
     return;
   }
-  window.__nekoFloatingWebuiLoaded = true;
+  nekoWindow.__nekoFloatingWebuiLoaded = true;
 
   let currentPanel = { ...DEFAULT_STATE.panel };
   let webuiUrl = DEFAULT_STATE.webuiUrl;
@@ -2857,12 +2860,27 @@
 
   function isConfiguredFrontendPage(pageUrl, frontendUrl) {
     try {
-      return new URL(pageUrl).origin === new URL(
+      const page = new URL(pageUrl);
+      const frontend = new URL(
         normalizeNekoUrl(frontendUrl) || DEFAULT_STATE.webuiUrl
-      ).origin;
+      );
+      if (page.origin === frontend.origin) {
+        return true;
+      }
+      return page.protocol === frontend.protocol
+        && page.port === frontend.port
+        && isLoopbackHostname(page.hostname)
+        && isLoopbackHostname(frontend.hostname);
     } catch {
       return false;
     }
+  }
+
+  function isLoopbackHostname(hostname) {
+    const normalized = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+    return normalized === 'localhost'
+      || normalized === '::1'
+      || /^127(?:\.\d{1,3}){3}$/.test(normalized);
   }
 
   function clampNumber(value, min, max) {

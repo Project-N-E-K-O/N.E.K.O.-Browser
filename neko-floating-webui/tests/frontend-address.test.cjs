@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { extractFunction } = require('./helpers/extract-function.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
@@ -31,7 +32,47 @@ test('background validates, persists, and applies the selected address', () => {
   assert.match(background, /type: 'NEKO_APPLY_WEBUI_URL'/);
   assert.match(background, /parsed\.protocol !== 'http:' && parsed\.protocol !== 'https:'/);
   assert.match(background, /parsed\.username \|\| parsed\.password/);
-  assert.match(background, /page\.origin !== frontend\.origin/);
+  assert.match(background, /!isConfiguredFrontendPage\(page, webuiUrl\)/);
+});
+
+test('floating UI treats loopback aliases as the configured N.E.K.O frontend', () => {
+  const defaultState = { webuiUrl: 'http://localhost:48911/' };
+  const sharedFunctions = (source) => `
+    ${extractFunction(source, 'normalizeNekoUrl')}
+    ${extractFunction(source, 'isLoopbackHostname')}
+    ${extractFunction(source, 'isConfiguredFrontendPage')}
+  `;
+  const isInjectableTab = Function(
+    'DEFAULT_STATE',
+    `${sharedFunctions(background)}
+     ${extractFunction(background, 'isInjectableTab')}
+     return isInjectableTab;`
+  )(defaultState);
+  const isConfiguredFrontendPage = Function(
+    'DEFAULT_STATE',
+    `${sharedFunctions(content)}
+     return isConfiguredFrontendPage;`
+  )(defaultState);
+
+  for (const pageUrl of [
+    'http://localhost:48911/',
+    'http://127.0.0.1:48911/chat',
+    'http://127.1.2.3:48911/',
+    'http://[::1]:48911/'
+  ]) {
+    assert.equal(isInjectableTab(pageUrl, defaultState.webuiUrl), false, pageUrl);
+    assert.equal(isConfiguredFrontendPage(pageUrl, defaultState.webuiUrl), true, pageUrl);
+  }
+
+  for (const pageUrl of [
+    'http://127.0.0.1:48912/',
+    'https://127.0.0.1:48911/',
+    'http://192.168.1.10:48911/',
+    'https://example.com/'
+  ]) {
+    assert.equal(isInjectableTab(pageUrl, defaultState.webuiUrl), true, pageUrl);
+    assert.equal(isConfiguredFrontendPage(pageUrl, defaultState.webuiUrl), false, pageUrl);
+  }
 });
 
 test('floating and side panel surfaces reload when the address changes', () => {
