@@ -156,7 +156,6 @@ test('a stale wake control removes itself on the configured frontend', async () 
   let messages = 0;
   let expanded = 0;
   const wakePanel = Function(
-    'getState',
     'isConfiguredFrontendPage',
     'location',
     'closePanel',
@@ -164,16 +163,17 @@ test('a stale wake control removes itself on the configured frontend', async () 
     'setAvatarForm',
     'setMinimized',
     'setTimeout',
+    'webuiUrl',
     `return (${extractFunction(content, 'wakePanel')});`
   )(
-    async () => ({ webuiUrl: 'http://localhost:48911/' }),
     () => true,
     { href: 'http://127.0.0.1:48911/' },
     () => { closed += 1; },
     { runtime: { sendMessage: async () => { messages += 1; } } },
     () => {},
     () => { expanded += 1; },
-    setTimeout
+    setTimeout,
+    'http://localhost:48911/'
   );
 
   await wakePanel();
@@ -181,6 +181,34 @@ test('a stale wake control removes itself on the configured frontend', async () 
   assert.equal(closed, 1);
   assert.equal(messages, 0);
   assert.equal(expanded, 0);
+});
+
+test('wake control keeps its timeout fallback when the background does not respond', async () => {
+  const minimizedCalls = [];
+  const wakePanel = Function(
+    'isConfiguredFrontendPage',
+    'location',
+    'closePanel',
+    'chrome',
+    'setAvatarForm',
+    'setMinimized',
+    'setTimeout',
+    'webuiUrl',
+    `return (${extractFunction(content, 'wakePanel')});`
+  )(
+    () => false,
+    { href: 'https://example.com/' },
+    () => {},
+    { runtime: { sendMessage: () => new Promise(() => {}) } },
+    () => {},
+    (...args) => { minimizedCalls.push(args); },
+    (callback) => { callback(); return 1; },
+    'http://localhost:48911/'
+  );
+
+  await wakePanel();
+
+  assert.deepEqual(minimizedCalls, [[false, true]]);
 });
 
 test('floating and side panel surfaces reload when the address changes', () => {

@@ -1542,8 +1542,7 @@
   }
 
   async function wakePanel() {
-    const state = await getState();
-    if (isConfiguredFrontendPage(location.href, state.webuiUrl)) {
+    if (isConfiguredFrontendPage(location.href, webuiUrl)) {
       closePanel();
       return;
     }
