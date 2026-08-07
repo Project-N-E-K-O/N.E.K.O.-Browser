@@ -64,7 +64,12 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== window.parent || event.origin !== extensionParentOrigin) {
+    const fromExtensionParent = event.source === window.parent
+      && event.origin === extensionParentOrigin;
+    const fromMainWorldControlRelay = event.source === window
+      && event.origin === window.location.origin
+      && event.data?._sender === 'extension-parent-control';
+    if (!fromExtensionParent && !fromMainWorldControlRelay) {
       return;
     }
 

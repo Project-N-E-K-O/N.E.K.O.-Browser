@@ -44,9 +44,12 @@ const PANEL_SWEEP_ALARM = 'neko-floating-ws-singleton-sweep';
 const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
 const FRAME_BRIDGE_TOKEN_KEY = 'floatingFrameBridgeToken';
 let panelSyncSeq = 0;
+let panelSyncTransition = Promise.resolve();
 let sidePanelTransition = Promise.resolve();
 let webuiUrlTransition = Promise.resolve();
 let frameBridgeTokenPromise = null;
+// @types/chrome does not yet expose the Chrome 142 side panel lifecycle events.
+const sidePanelLifecycle = /** @type {*} */ (chrome.sidePanel);
 const offscreenRecoveryPromise = cleanupOrphanedOffscreenPcmSessions();
 const syncWebuiContentScripts = createWebuiContentScriptRegistrar(chrome.scripting);
 const webuiContentScriptRegistrationReady = chrome.storage.local
@@ -62,8 +65,8 @@ webuiContentScriptRegistrationReady.catch((error) => {
   );
 });
 
-chrome.runtime.onInstalled.addListener(async () => {
-  await queueWebuiUrlTransition(async () => {
+chrome.runtime.onInstalled.addListener(() => {
+  queuePanelMutation(() => queueWebuiUrlTransition(async () => {
     const current = await chrome.storage.local.get();
     const hasWakeState = Object.prototype.hasOwnProperty.call(current, 'wakeStateInitialized');
     const minimized = hasWakeState && typeof current.minimized === 'boolean'
@@ -92,39 +95,43 @@ chrome.runtime.onInstalled.addListener(async () => {
       }
     });
     schedulePanelSweep();
-  });
+  })).catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
   schedulePanelSweep();
-  queueSidePanelTransition(resetStartupSidePanelState).catch(() => {});
+  queueSidePanelTransition(() => queuePanelMutation(resetStartupSidePanelState)).catch(() => {});
 });
 
-chrome.sidePanel.onOpened.addListener((info) => {
+sidePanelLifecycle.onOpened.addListener((info) => {
   if (!isNekoSidePanelPath(info.path)) {
     return;
   }
-  queueSidePanelTransition(() => claimSidePanel(info.windowId)).catch(() => {});
+  queueSidePanelTransition(
+    () => queuePanelMutation(() => claimSidePanel(info.windowId))
+  ).catch(() => {});
 });
 
-chrome.sidePanel.onClosed.addListener((info) => {
+sidePanelLifecycle.onClosed.addListener((info) => {
   if (!isNekoSidePanelPath(info.path)) {
     return;
   }
-  queueSidePanelTransition(() => releaseSidePanel(info.windowId, true)).catch(() => {});
+  queueSidePanelTransition(
+    () => queuePanelMutation(() => releaseSidePanel(info.windowId, true))
+  ).catch(() => {});
 });
 
 if (chrome.alarms) {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === PANEL_SWEEP_ALARM) {
-      sweepPanelSingleton().catch(() => {});
+      queuePanelTransition(sweepPanelSingleton).catch(() => {});
     }
   });
 }
 
 schedulePanelSweep();
 setTimeout(() => {
-  sweepPanelSingleton().catch(() => {});
+  queuePanelTransition(sweepPanelSingleton).catch(() => {});
 }, 3000);
 setTimeout(() => {
   syncLastFocusedPanel().catch(() => {});
@@ -138,7 +145,6 @@ async function handleActionClick(tab) {
   if (!isInjectableTab(tab.url, state.webuiUrl)) {
     return;
   }
-  panelSyncSeq += 1;
   if (state.displayMode === 'sidebar') {
     return;
   }
@@ -154,7 +160,9 @@ async function handleActionClick(tab) {
   }
 
   if (activeTabId === tab.id) {
-    const response = await sendTabMessage(tab.id, { type: 'NEKO_TOGGLE_SINGLETON' });
+    const response = await sendTabMessage(tab.id, {
+      type: state.minimized === true ? 'NEKO_OPEN_SINGLETON' : 'NEKO_TOGGLE_SINGLETON'
+    });
     if (!response?.awake) {
       await stopPcmRoutesForTab(tab.id);
     }
@@ -190,7 +198,11 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
   syncFocusedWindowPanel(windowId, syncSeq).catch(() => {});
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId) => {
+chrome.tabs.onRemoved.addListener((tabId) => {
+  queuePanelTransition(() => handleRemovedTab(tabId)).catch(() => {});
+});
+
+async function handleRemovedTab(tabId) {
   const pcmCleanup = stopPcmRoutesForTab(tabId);
   const state = await getStoredState();
   if (state.activeTabId === tabId) {
@@ -200,12 +212,16 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     });
   }
   await pcmCleanup;
-});
+}
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== 'loading') {
     return;
   }
+  queuePanelTransition(() => handleLoadingTab(tabId)).catch(() => {});
+});
+
+async function handleLoadingTab(tabId) {
   void stopPcmRoutesForTab(tabId);
 
   const state = await getStoredState();
@@ -222,7 +238,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
       fullscreenFromCollapsedFloating: false
     });
   }
-});
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') {
@@ -276,7 +292,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     }
 
-    (async () => {
+    queuePanelMutation(async () => {
       if (payload.webuiUrl) {
         await setWebuiUrl(payload.webuiUrl);
         delete payload.webuiUrl;
@@ -284,29 +300,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (Object.keys(payload).length) {
         await chrome.storage.local.set(payload);
       }
-      sendResponse({ ok: true });
-    })().catch((error) => {
-      sendResponse({ ok: false, error: String(error?.message || error) });
-    });
+      return { ok: true };
+    })
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_SET_SURFACE_COMPONENTS') {
-    setSurfaceComponents(message.surfaceComponents)
+    queuePanelTransition(() => setSurfaceComponents(message.surfaceComponents))
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_SET_CHAT_SURFACE_MODE') {
-    setChatSurfaceMode(message.chatSurfaceMode)
+    queuePanelTransition(() => setChatSurfaceMode(message.chatSurfaceMode))
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_SET_WEBUI_URL') {
-    setWebuiUrl(message.webuiUrl)
+    queuePanelMutation(() => setWebuiUrl(message.webuiUrl))
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
@@ -322,38 +338,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'NEKO_TOGGLE_FROM_POPUP') {
-    (async () => {
+    queuePanelMutation(async () => {
       const state = await getStoredState();
       if (state.displayMode === 'sidebar') {
-        sendResponse({ ok: false, error: 'Use the native side panel toggle in popup.' });
-        return;
+        return { ok: false, error: 'Use the native side panel toggle in popup.' };
       }
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
       if (tab && isInjectableTab(tab.url, state.webuiUrl)) {
         await handleActionClick(tab);
+      } else {
+        await enforceSingleActivePanel(null);
+        await chrome.storage.local.set({ activeTabId: null });
       }
-      sendResponse({ ok: true });
-    })();
+      return { ok: true };
+    })
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_SET_DISPLAY_MODE') {
     const mode = normalizeDisplayMode(message.mode);
-    queueSidePanelTransition(() => setDisplayMode(mode))
+    queueSidePanelTransition(
+      () => queuePanelMutation(() => setDisplayMode(mode))
+    )
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_SIDEBAR_CLAIM') {
-    queueSidePanelTransition(() => claimSidePanel(message.windowId))
+    queueSidePanelTransition(
+      () => queuePanelMutation(() => claimSidePanel(message.windowId))
+    )
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_SIDEBAR_RELEASE') {
-    queueSidePanelTransition(() => releaseSidePanel(message.windowId, false))
+    queueSidePanelTransition(
+      () => queuePanelMutation(() => releaseSidePanel(message.windowId, false))
+    )
       .then(sendResponse)
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
@@ -365,58 +391,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'NEKO_AUTO_ATTACH' && sender.tab?.id) {
-    autoAttachPanel(sender.tab.id).then(sendResponse);
+    queuePanelTransition(() => autoAttachPanel(sender.tab.id))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_WAKE_PANEL' && sender.tab?.id) {
-    panelSyncSeq += 1;
-    wakePanelInTab(sender.tab.id).then(sendResponse);
+    queuePanelMutation(() => wakePanelInTab(sender.tab.id))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message.type === 'NEKO_PANEL_STATE' && sender.tab?.id) {
-    panelSyncSeq += 1;
-    const payload = {};
-
-    if (message.closed) {
-      Object.assign(payload, {
-        activeTabId: null,
-        enabled: false,
-        fullscreenFromCollapsedFloating: false
-      });
-    }
-
-    if (typeof message.minimized === 'boolean') {
-      payload.minimized = message.minimized;
-      payload.avatarForm = message.minimized ? 'cat' : normalizeAvatarForm(message.avatarForm);
-      if (message.minimized) {
-        payload.fullscreenFromCollapsedFloating = false;
-      }
-      payload.wakeStateInitialized = true;
-      payload.activeTabId = sender.tab.id;
-      payload.enabled = true;
-    }
-
-    if (Object.keys(payload).length > 0) {
-      chrome.storage.local.set(payload).catch(() => {});
-    }
-
-    if (message.closed || message.minimized === true) {
-      stopPcmRoutesForTab(sender.tab.id).catch(() => {});
-    }
-
-    if (payload.activeTabId) {
-      enforceSingleActivePanel(payload.activeTabId).catch(() => {});
-    }
-
-    chrome.tabs.sendMessage(sender.tab.id, message).catch(() => {});
-    sendResponse({ ok: true });
-    return false;
+    queuePanelMutation(() => applyPanelStateMessage(message, sender.tab.id))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
   }
 
   if (message.type === 'NEKO_AVATAR_FORM_STATE' && sender.tab?.id) {
-    (async () => {
+    queuePanelTransition(async () => {
       const state = await getStoredState();
       if (state.activeTabId !== sender.tab.id || state.minimized === true) {
         return { ok: true, ignored: true, avatarForm: state.avatarForm };
@@ -427,9 +423,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ...(avatarForm === 'model' ? { fullscreenFromCollapsedFloating: false } : {})
       });
       return { ok: true, avatarForm };
-    })().then(sendResponse).catch((error) => {
-      sendResponse({ ok: false, error: String(error?.message || error) });
-    });
+    })
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
@@ -486,6 +482,61 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+async function applyPanelStateMessage(message, tabId) {
+  const state = await getStoredState();
+  const changesPanelState = message.closed === true || typeof message.minimized === 'boolean';
+  if (changesPanelState && state.activeTabId !== tabId) {
+    return { ok: true, ignored: true };
+  }
+
+  const payload = {};
+
+  if (message.closed) {
+    Object.assign(payload, {
+      activeTabId: null,
+      enabled: false,
+      fullscreenFromCollapsedFloating: false
+    });
+  }
+
+  if (typeof message.minimized === 'boolean') {
+    payload.minimized = message.minimized;
+    payload.avatarForm = message.minimized ? 'cat' : normalizeAvatarForm(message.avatarForm);
+    if (message.minimized) {
+      payload.fullscreenFromCollapsedFloating = false;
+    }
+    payload.wakeStateInitialized = true;
+    payload.activeTabId = tabId;
+    payload.enabled = true;
+  }
+
+  if (Object.keys(payload).length > 0) {
+    await chrome.storage.local.set(payload);
+  }
+
+  if (message.closed || message.minimized === true) {
+    await stopPcmRoutesForTab(tabId);
+  }
+
+  if (payload.activeTabId) {
+    await enforceSingleActivePanel(payload.activeTabId);
+  }
+
+  await chrome.tabs.sendMessage(tabId, message).catch(() => {});
+  return { ok: true };
+}
+
+function queuePanelTransition(task) {
+  const next = panelSyncTransition.then(task, task);
+  panelSyncTransition = next.catch(() => {});
+  return next;
+}
+
+function queuePanelMutation(task) {
+  panelSyncSeq += 1;
+  return queuePanelTransition(task);
+}
+
 function queueSidePanelTransition(task) {
   const next = sidePanelTransition.then(task, task);
   sidePanelTransition = next.catch(() => {});
@@ -508,7 +559,6 @@ async function resetStartupSidePanelState() {
 
 async function setDisplayMode(mode) {
   const previous = await getStoredState();
-  panelSyncSeq += 1;
 
   if (mode === 'sidebar') {
     await deactivateAllTabPanels();
@@ -641,7 +691,6 @@ async function claimSidePanel(windowId) {
     throw new Error('Invalid side panel window id.');
   }
 
-  panelSyncSeq += 1;
   const state = await getStoredState();
   await prepareWebuiContentScripts();
   const previousWindowId = normalizeWindowId(state.activeSidePanelWindowId);
@@ -811,37 +860,71 @@ async function wakePanelInTab(tabId) {
   };
 }
 
-async function syncPanelToTab(tabId, syncSeq) {
-  const state = await getStoredState();
-  if (state.displayMode === 'sidebar') {
-    await deactivateAllTabPanels();
-    await chrome.storage.local.set({ activeTabId: null });
-    return { ok: true, minimized: true, awake: false };
-  }
-  const tab = await getTab(tabId);
-  if (!tab || !isInjectableTab(tab.url, state.webuiUrl)) {
-    await enforceSingleActivePanel(null);
-    await chrome.storage.local.set({ activeTabId: null });
-    return { ok: false, awake: false };
+function syncPanelToTab(tabId, syncSeq) {
+  return queuePanelTransition(() => performPanelSyncToTab(tabId, syncSeq));
+}
+
+async function performPanelSyncToTab(tabId, syncSeq) {
+  const staleResponse = { ok: false, awake: false };
+  const isCurrent = () => syncSeq === panelSyncSeq;
+  if (!isCurrent()) {
+    return staleResponse;
   }
 
-  if (syncSeq !== panelSyncSeq) {
-    return { ok: false, awake: false };
+  const state = await getStoredState();
+  if (!isCurrent()) {
+    return staleResponse;
+  }
+
+  if (state.displayMode === 'sidebar') {
+    await deactivateAllTabPanels();
+    if (!isCurrent()) {
+      return staleResponse;
+    }
+    await chrome.storage.local.set({ activeTabId: null });
+    if (!isCurrent()) {
+      return staleResponse;
+    }
+    return { ok: true, minimized: true, awake: false };
+  }
+
+  const tab = await getTab(tabId);
+  if (!isCurrent()) {
+    return staleResponse;
+  }
+
+  if (!tab || !isInjectableTab(tab.url, state.webuiUrl)) {
+    await enforceSingleActivePanel(null);
+    if (!isCurrent()) {
+      return staleResponse;
+    }
+    await chrome.storage.local.set({ activeTabId: null });
+    return staleResponse;
   }
 
   const ready = await ensureContentScript(tabId);
-  if (!ready) {
-    await enforceSingleActivePanel(null);
-    await chrome.storage.local.set({ activeTabId: null });
-    return { ok: false, awake: false };
+  if (!isCurrent()) {
+    return staleResponse;
   }
 
-  if (syncSeq !== panelSyncSeq) {
-    return { ok: false, awake: false };
+  if (!ready) {
+    await enforceSingleActivePanel(null);
+    if (!isCurrent()) {
+      return staleResponse;
+    }
+    await chrome.storage.local.set({ activeTabId: null });
+    return staleResponse;
+  }
+
+  if (!isCurrent()) {
+    return staleResponse;
   }
 
   if (!state.enabled) {
     await stopPcmRoutesExceptTab(null);
+    if (!isCurrent()) {
+      return staleResponse;
+    }
     await chrome.storage.local.set({
       activeTabId: null,
       minimized: true,
@@ -849,8 +932,13 @@ async function syncPanelToTab(tabId, syncSeq) {
       fullscreenFromCollapsedFloating: false,
       wakeStateInitialized: true
     });
+    if (!isCurrent()) {
+      return staleResponse;
+    }
     const response = await sendTabMessage(tabId, { type: 'NEKO_SYNC_SINGLETON' });
-    return response || { ok: true, visible: true, minimized: true, awake: false };
+    return isCurrent()
+      ? response || { ok: true, visible: true, minimized: true, awake: false }
+      : staleResponse;
   }
 
   const minimized = Boolean(state.minimized);
@@ -863,17 +951,24 @@ async function syncPanelToTab(tabId, syncSeq) {
       && state.fullscreenFromCollapsedFloating === true,
     wakeStateInitialized: true
   });
+  if (!isCurrent()) {
+    return staleResponse;
+  }
   await enforceSingleActivePanel(tabId);
+  if (!isCurrent()) {
+    return staleResponse;
+  }
   if (minimized) {
     await stopPcmRoutesForTab(tabId);
-  }
-
-  if (syncSeq !== panelSyncSeq) {
-    return { ok: false, awake: false };
+    if (!isCurrent()) {
+      return staleResponse;
+    }
   }
 
   const response = await sendTabMessage(tabId, { type: 'NEKO_SYNC_SINGLETON' });
-  return response || { ok: true, visible: true, minimized, awake: !minimized };
+  return isCurrent()
+    ? response || { ok: true, visible: true, minimized, awake: !minimized }
+    : staleResponse;
 }
 
 async function activatePanelInTab(tabId, options = {}) {
@@ -910,9 +1005,9 @@ async function syncFocusedWindowPanel(windowId, syncSeq) {
 }
 
 async function syncLastFocusedPanel() {
+  const syncSeq = ++panelSyncSeq;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
   if (tab?.id) {
-    const syncSeq = ++panelSyncSeq;
     await syncPanelToTab(tab.id, syncSeq);
   }
 }

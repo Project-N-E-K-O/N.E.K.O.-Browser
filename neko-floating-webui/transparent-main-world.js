@@ -1,19 +1,21 @@
 (function () {
   // Derived from src/manifest-base.json#key. Keep both values in sync.
   const NEKO_EXTENSION_ORIGIN = 'chrome-extension://ndkhbmbopodofbilnhiicejdihjpfebj';
+  /** @type {Window & typeof globalThis & { __nekoFloatingTransparentMainWorld?: boolean }} */
+  const runtimeWindow = window;
   const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
   const isNativeSidePanel = window.name === 'neko-native-sidepanel';
   if (
     window.top === window
     || (!isEmbeddedSurface && !isNativeSidePanel)
-    || window.__nekoFloatingTransparentMainWorld
+    || runtimeWindow.__nekoFloatingTransparentMainWorld
   ) {
     return;
   }
   const FLOATING_BRIDGE_ORIGIN = resolveFloatingBridgeOrigin();
   if (!FLOATING_BRIDGE_ORIGIN) return;
 
-  window.__nekoFloatingTransparentMainWorld = true;
+  runtimeWindow.__nekoFloatingTransparentMainWorld = true;
   document.documentElement.dataset.nekoFloatingTransparentMainWorld = 'enabled';
   if (isNativeSidePanel) {
     document.documentElement.dataset.nekoNativeSidePanel = 'enabled';
@@ -27,6 +29,7 @@
   window.addEventListener('resize', forceTransparentRenderers);
   window.addEventListener('live2d-model-loaded', forceTransparentRenderers);
   window.addEventListener('live2d-floating-buttons-ready', forceTransparentRenderers);
+  window.addEventListener('message', consumeExtensionParentControlMessage, { capture: true });
   window.addEventListener('message', (event) => {
     if (event.source !== window || !event.data) {
       return;
@@ -45,7 +48,9 @@
       applySidePanelTheme(event.data.theme);
     }
   });
-  window.addEventListener('message', (event) => {
+  window.addEventListener('message', consumePcmRelayMessage, { capture: true });
+
+  function consumePcmRelayMessage(event) {
     if (!event.data || typeof event.data.type !== 'string') {
       return;
     }
@@ -54,25 +59,31 @@
     }
     if (event.data.type === 'NEKO_PCM_PORT') {
       if (
-        FLOATING_BRIDGE_ORIGIN
+        event.isTrusted
+        && FLOATING_BRIDGE_ORIGIN
         && event.source === window.parent
         && event.origin === FLOATING_BRIDGE_ORIGIN
         && event.ports
         && event.ports[0]
       ) {
+        event.stopImmediatePropagation();
         attachFloatingPcmPort(event.ports[0]);
       }
       return;
     }
     const fromIsolated = event.source === window && event.data._sender === 'isolated';
-    const fromFloating = event.source === window.parent
+    const fromFloating = event.isTrusted
+      && event.source === window.parent
       && event.origin === FLOATING_BRIDGE_ORIGIN
       && event.data._sender === 'floating';
     if (!fromIsolated && !fromFloating) {
       return;
     }
+    if (fromFloating) {
+      event.stopImmediatePropagation();
+    }
     handlePcmRelayMessage(event.data);
-  });
+  }
 
   let ticks = 0;
   const intervalId = window.setInterval(() => {
@@ -84,6 +95,38 @@
       window.clearInterval(intervalId);
     }
   }, 250);
+
+  function consumeExtensionParentControlMessage(event) {
+    if (
+      !event.isTrusted
+      || event.source !== window.parent
+      || event.origin !== FLOATING_BRIDGE_ORIGIN
+      || !event.data
+      || typeof event.data.type !== 'string'
+    ) {
+      return;
+    }
+
+    const isReflow = event.data.type === 'NEKO_FLOATING_WEBUI_REFLOW';
+    const isTheme = isNativeSidePanel
+      && event.data.type === 'NEKO_SIDEBAR_THEME'
+      && (event.data.theme === 'dark' || event.data.theme === 'light');
+    if (!isReflow && !isTheme) {
+      return;
+    }
+
+    event.stopImmediatePropagation();
+    const relay = {
+      type: event.data.type,
+      _sender: 'extension-parent-control'
+    };
+    if (isReflow) {
+      relay.force = event.data.force === true;
+    } else {
+      relay.theme = event.data.theme;
+    }
+    window.postMessage(relay, window.location.origin);
+  }
 
   function applySidePanelTheme(theme) {
     if (theme !== 'dark' && theme !== 'light') {
@@ -242,17 +285,18 @@
       rejectPromise = reject;
     });
 
+    const stopOutputTrack = outputTrack.stop.bind(outputTrack);
     const entry = {
       audioContext,
       destination,
       stream: destination.stream,
+      outputTrack,
+      stopOutputTrack,
       resolve: resolvePromise,
       reject: rejectPromise,
       nextStartTime: 0,
       resolved: false,
       closed: false,
-      lastNonSilentAt: 0,
-      idleTimer: null,
       bridgeTimer: window.setTimeout(() => {
         rejectPcmRelay(requestId, new DOMException('PCM bridge did not receive start request. Reload the host page after reloading the extension.', 'TimeoutError'));
       }, 3000),
@@ -262,11 +306,7 @@
     };
     pcmRelayRequests.set(requestId, entry);
 
-    const originalStop = outputTrack.stop.bind(outputTrack);
-    outputTrack.stop = () => {
-      stopPcmRelay(requestId);
-      originalStop();
-    };
+    outputTrack.stop = () => stopPcmRelay(requestId);
     outputTrack.onended = () => stopPcmRelay(requestId);
 
     console.log('[NEKO-MIC main] Starting PCM relay', requestId.substring(0, 8), 'ctxState:', audioContext.state);
@@ -329,13 +369,8 @@
         entry.resolved = true;
         window.clearTimeout(entry.setupTimer);
         console.log('[NEKO-MIC main] PCM relay stream resolved', requestId.substring(0, 8), 'ctxState:', entry.audioContext.state);
-        armPcmIdleCleanup(requestId, entry);
         scheduleAudioContextResumes();
         entry.resolve(entry.stream);
-      }
-
-      if (Number(data.level) > 0.015) {
-        entry.lastNonSilentAt = performance.now();
       }
     } catch (err) {
       rejectPcmRelay(requestId, err);
@@ -378,6 +413,9 @@
   }
 
   function stopPcmRelay(requestId) {
+    if (!pcmRelayRequests.has(requestId)) {
+      return;
+    }
     postToIsolated({ type: 'NEKO_PCM_STOP', requestId });
     cleanupPcmRelay(requestId);
   }
@@ -390,32 +428,14 @@
     entry.closed = true;
     window.clearTimeout(entry.setupTimer);
     window.clearTimeout(entry.bridgeTimer);
-    window.clearTimeout(entry.idleTimer);
-    try { entry.audioContext.close(); } catch {}
     pcmRelayRequests.delete(requestId);
-  }
-
-  function armPcmIdleCleanup(requestId, entry) {
-    const startedAt = performance.now();
-    const checkIdle = () => {
-      if (entry.closed) {
-        return;
+    try { entry.outputTrack.onended = null; } catch {}
+    try {
+      if (entry.outputTrack.readyState !== 'ended') {
+        entry.stopOutputTrack();
       }
-      const now = performance.now();
-      const heardAudio = entry.lastNonSilentAt > 0;
-      const age = now - startedAt;
-      const silentFor = heardAudio ? now - entry.lastNonSilentAt : age;
-
-      if ((!heardAudio && age > 3500) || (heardAudio && silentFor > 12000)) {
-        console.log('[NEKO-MIC main] PCM relay idle cleanup', requestId.substring(0, 8), 'heardAudio:', heardAudio);
-        stopPcmRelay(requestId);
-        return;
-      }
-
-      entry.idleTimer = window.setTimeout(checkIdle, 1500);
-    };
-
-    entry.idleTimer = window.setTimeout(checkIdle, 3500);
+    } catch {}
+    try { entry.audioContext.close(); } catch {}
   }
 
   function postToIsolated(data) {

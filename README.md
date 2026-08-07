@@ -11,7 +11,7 @@ N.E.K.O Browser 是一个统一构建的 Chrome/Edge MV3 扩展。它可以用�
 ### 环境要求
 
 - Chrome 142 或更高版本，或支持完整 `chrome.sidePanel` API 的 Microsoft Edge。
-- Node.js 20.19.0–20.x 或 22.12.0 及以上版本、`pnpm 10.17.0`。
+- Node.js 22.13.0–22.x 或 24.0.0 及以上版本，`pnpm 10.17.0`。
 - 构建使用项目内安装的 WXT 0.20.27，无需全局安装 WXT。
 - 可正常访问的 N.E.K.O WebUI。
 - BrowserSkill `bsk 0.1.9` daemon。

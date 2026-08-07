@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { extractFunction } = require('./helpers/extract-function.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
@@ -82,4 +83,52 @@ test('side panel applies the browser theme inside WebUI without persisting it', 
   assert.match(transparentPage, /#react-chat-window-overlay/);
   assert.match(transparentPage, /setProperty\('color-scheme', 'light dark', 'important'\)/);
   assert.match(embeddedCss, /#react-chat-window-overlay[\s\S]*background: transparent !important/);
+});
+
+test('extension parent controls are consumed before host message listeners', () => {
+  const relayed = [];
+  const parent = {};
+  const window = {
+    parent,
+    location: { origin: 'http://localhost:48911' },
+    postMessage: (message, targetOrigin) => relayed.push({ message, targetOrigin })
+  };
+  const consume = new Function(
+    'window',
+    'FLOATING_BRIDGE_ORIGIN',
+    'isNativeSidePanel',
+    `return (${extractFunction(mainWorld, 'consumeExtensionParentControlMessage')});`
+  )(window, 'chrome-extension://trusted-extension', true);
+  let stopped = 0;
+
+  consume({
+    isTrusted: true,
+    source: parent,
+    origin: 'chrome-extension://untrusted-extension',
+    data: { type: 'NEKO_FLOATING_WEBUI_REFLOW' },
+    stopImmediatePropagation: () => { stopped += 1; }
+  });
+  assert.equal(stopped, 0);
+  assert.deepEqual(relayed, []);
+
+  consume({
+    isTrusted: true,
+    source: parent,
+    origin: 'chrome-extension://trusted-extension',
+    data: { type: 'NEKO_FLOATING_WEBUI_REFLOW', force: true },
+    stopImmediatePropagation: () => { stopped += 1; }
+  });
+  assert.equal(stopped, 1);
+  assert.deepEqual(relayed, [{
+    message: {
+      type: 'NEKO_FLOATING_WEBUI_REFLOW',
+      _sender: 'extension-parent-control',
+      force: true
+    },
+    targetOrigin: 'http://localhost:48911'
+  }]);
+
+  assert.match(mainWorld, /addEventListener\('message', consumeExtensionParentControlMessage, \{ capture: true \}\)/);
+  assert.match(mainWorld, /!event\.isTrusted[\s\S]*?event\.source !== window\.parent[\s\S]*?event\.origin !== FLOATING_BRIDGE_ORIGIN/);
+  assert.match(transparentPage, /event\.data\?\._sender === 'extension-parent-control'/);
 });

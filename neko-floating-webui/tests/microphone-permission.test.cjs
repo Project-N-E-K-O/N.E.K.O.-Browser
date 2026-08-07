@@ -15,6 +15,7 @@ const background = read('background.js');
 const content = read('content.js');
 const bridge = read('floating-frame.js');
 const transparentPage = read('transparent-page.js');
+const transparentMainWorld = read('transparent-main-world.js');
 
 test('popup exposes an explicit microphone authorization control', () => {
   assert.match(popupHtml, /id="authorize-microphone"/);
@@ -105,4 +106,46 @@ test('PCM capture is reachable only through the extension-owned floating frame r
   assert.equal(isOffscreenSender({ url: offscreenUrl }), true);
   assert.equal(isOffscreenSender({ url: offscreenUrl, tab: { id: 7 } }), false);
   assert.equal(isOffscreenSender({ url: extensionOrigin + 'popup.html' }), false);
+});
+
+test('PCM relay lifetime follows the returned track instead of input volume', () => {
+  assert.doesNotMatch(transparentMainWorld, /armPcmIdleCleanup|lastNonSilentAt|silentFor|PCM relay idle cleanup/);
+  assert.match(transparentMainWorld, /outputTrack\.stop = \(\) => stopPcmRelay\(requestId\)/);
+
+  const requests = new Map();
+  let trackStops = 0;
+  let contextCloses = 0;
+  const entry = {
+    closed: false,
+    setupTimer: 1,
+    bridgeTimer: 2,
+    outputTrack: { readyState: 'live', onended: () => {} },
+    stopOutputTrack() {
+      assert.equal(requests.has('request'), false, 'delete the route before ending its track');
+      trackStops += 1;
+      this.outputTrack.readyState = 'ended';
+    },
+    audioContext: { close: () => { contextCloses += 1; } }
+  };
+  requests.set('request', entry);
+  const cleanup = new Function(
+    'pcmRelayRequests',
+    'window',
+    `return (${extractFunction(transparentMainWorld, 'cleanupPcmRelay')});`
+  )(requests, { clearTimeout() {} });
+
+  cleanup('request');
+  assert.equal(entry.closed, true);
+  assert.equal(requests.size, 0);
+  assert.equal(trackStops, 1);
+  assert.equal(contextCloses, 1);
+  assert.equal(entry.outputTrack.onended, null);
+});
+
+test('authenticated parent PCM messages do not reach host message fallbacks', () => {
+  const handler = extractFunction(transparentMainWorld, 'consumePcmRelayMessage');
+  assert.match(transparentMainWorld, /addEventListener\('message', consumePcmRelayMessage, \{ capture: true \}\)/);
+  assert.match(handler, /event\.isTrusted[\s\S]*?event\.source === window\.parent[\s\S]*?event\.origin === FLOATING_BRIDGE_ORIGIN/);
+  assert.match(handler, /event\.data\.type === 'NEKO_PCM_PORT'[\s\S]*?event\.stopImmediatePropagation\(\)[\s\S]*?attachFloatingPcmPort/);
+  assert.match(handler, /if \(fromFloating\) \{[\s\S]*?event\.stopImmediatePropagation\(\)/);
 });

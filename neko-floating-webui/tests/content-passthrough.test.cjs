@@ -15,6 +15,14 @@ function functionBlock(name, nextName) {
   return source.slice(start, end);
 }
 
+function backgroundFunctionBlock(name, nextName) {
+  const start = background.indexOf(`function ${name}`);
+  assert.notEqual(start, -1, `missing ${name}`);
+  const end = nextName ? background.indexOf(`function ${nextName}`, start + 1) : background.length;
+  assert.notEqual(end, -1, `missing ${nextName}`);
+  return background.slice(start, end);
+}
+
 test('floating and fullscreen load the embedded surface with explicit components', () => {
   const block = functionBlock('getFrameTargetUrl', 'isEmbeddedSurfaceActive');
   assert.match(block, /isEmbeddedDisplayMode\(displayMode\)/);
@@ -434,11 +442,8 @@ test('a collapsed floating surface becomes a live fullscreen surface requesting 
 });
 
 test('fullscreen transfer state survives awake status updates until an explicit collapse', () => {
-  const start = background.indexOf("if (message.type === 'NEKO_PANEL_STATE'");
-  const end = background.indexOf("if (message.type === 'NEKO_AVATAR_FORM_STATE'", start);
-  const block = background.slice(start, end);
+  const block = backgroundFunctionBlock('applyPanelStateMessage', 'queuePanelTransition');
 
-  assert.ok(start >= 0 && end > start, 'missing NEKO_PANEL_STATE handler');
   assert.match(
     block,
     /if \(message\.minimized\) \{\s*payload\.fullscreenFromCollapsedFloating = false;\s*\}/
