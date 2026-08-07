@@ -3,7 +3,13 @@
 
     const params = new URLSearchParams(window.location.search);
     const surface = String(params.get('surface') || '').trim().toLowerCase();
-    if (window.top === window || surface !== 'embed' || window.__nekoFloatingEmbeddedSurfaceLoaded) {
+    const extensionParentOrigin = resolveExtensionParentOrigin();
+    if (
+        window.top === window
+        || surface !== 'embed'
+        || !extensionParentOrigin
+        || window.__nekoFloatingEmbeddedSurfaceLoaded
+    ) {
         return;
     }
 
@@ -98,7 +104,7 @@
     let fixedChatMode = normalizeChatMode(initialChatMode);
     let embeddedDisplayMode = null;
     let pageChatMode = null;
-    let connectedParentOrigin = null;
+    let connectedParentOrigin = extensionParentOrigin;
     let regionFrame = 0;
     let chatVisibilityFrame = 0;
     let chatVisibilityPending = false;
@@ -127,6 +133,20 @@
     const cursorBoundsStates = new WeakMap();
     const stabilizedModelDragHandlers = new WeakMap();
     const modelPanDragStates = new WeakMap();
+
+    function resolveExtensionParentOrigin() {
+        const candidates = [window.location.ancestorOrigins?.[0], document.referrer];
+        for (const candidate of candidates) {
+            if (!candidate) continue;
+            try {
+                const parent = new URL(candidate);
+                if (parent.protocol === 'chrome-extension:' && parent.host) {
+                    return `chrome-extension://${parent.host}`;
+                }
+            } catch (_) {}
+        }
+        return '';
+    }
 
     if (requestedAvatarForm === 'cat') {
         document.documentElement.dataset.nekoAvatarFormRequest = 'cat';
@@ -1773,11 +1793,9 @@
 
     function onParentMessage(event) {
         if (event.source !== window.parent || !event.data || typeof event.data.type !== 'string') return;
+        if (event.origin !== extensionParentOrigin) return;
         const data = event.data;
         if (!data.type.startsWith('NEKO_EMBED_')) return;
-
-        if (connectedParentOrigin && event.origin !== connectedParentOrigin) return;
-        if (!connectedParentOrigin) connectedParentOrigin = event.origin;
 
         if (data.type === 'NEKO_EMBED_CONNECT') {
             if (data.displayMode !== undefined) setEmbeddedDisplayMode(data.displayMode);

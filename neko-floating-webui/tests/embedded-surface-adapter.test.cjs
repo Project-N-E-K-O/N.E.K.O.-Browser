@@ -35,9 +35,11 @@ test('the extension owns and injects the embedded surface adapter', () => {
   assert.equal(mainWorld.all_frames, true);
 });
 
-test('the adapter activates from the extension query marker without host globals', () => {
+test('the adapter requires both the embed marker and an extension parent', () => {
   assert.match(adapter, /params\.get\('surface'\)/);
   assert.match(adapter, /surface !== 'embed'/);
+  assert.match(adapter, /!extensionParentOrigin/);
+  assert.match(adapter, /event\.origin !== extensionParentOrigin/);
   assert.match(adapter, /params\.get\('components'\)/);
   assert.match(adapter, /document\.documentElement\.classList\.add\('neko-embedded-surface'\)/);
   assert.doesNotMatch(adapter, /__NEKO_EMBEDDED_SURFACE_CONFIG__/);

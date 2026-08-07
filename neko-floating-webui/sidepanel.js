@@ -13,6 +13,7 @@
   let webuiUrl = DEFAULT_WEBUI_URL;
   let isOwner = false;
   let themeSyncGeneration = 0;
+  let healthCheckGeneration = 0;
 
   preferredColorScheme?.addEventListener('change', scheduleSidePanelTheme);
 
@@ -183,6 +184,7 @@
 
   function unloadFrame() {
     themeSyncGeneration += 1;
+    healthCheckGeneration += 1;
     if (!frame.hasAttribute('src')) {
       return false;
     }
@@ -236,10 +238,18 @@
     if (!isOwner) {
       return;
     }
+    const generation = ++healthCheckGeneration;
+    const checkedUrl = webuiUrl;
     try {
       const response = await chrome.runtime.sendMessage({ type: 'NEKO_HEALTH_CHECK' });
+      if (generation !== healthCheckGeneration || !isOwner || checkedUrl !== webuiUrl) {
+        return;
+      }
       setOnline(response?.online === true);
     } catch {
+      if (generation !== healthCheckGeneration || !isOwner || checkedUrl !== webuiUrl) {
+        return;
+      }
       setOnline(false);
     }
   }

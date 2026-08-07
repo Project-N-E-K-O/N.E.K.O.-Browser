@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "node scripts/ensure-browser-skill.cjs && wxt",
     "build": "node scripts/ensure-browser-skill.cjs && wxt build",
-    "compile": "node scripts/ensure-browser-skill.cjs && wxt prepare && tsc --noEmit",
-    "test": "pnpm test:neko && pnpm test:integration",
+    "compile": "node scripts/ensure-browser-skill.cjs && wxt prepare && pnpm check:runtime && tsc --noEmit",
+    "check:runtime": "node scripts/check-runtime-js.cjs",
+    "test": "pnpm check:runtime && pnpm test:neko && pnpm test:integration",
     "test:neko": "node tests/test-neko.cjs",
     "test:integration": "node scripts/ensure-browser-skill.cjs && vitest run",
     "postinstall": "node scripts/ensure-browser-skill.cjs && wxt prepare"

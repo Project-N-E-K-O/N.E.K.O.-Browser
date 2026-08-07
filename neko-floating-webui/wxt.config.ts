@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "wxt";
+import { defineConfig, type ResolvedPublicFile } from "wxt";
 import { adaptBrowserSkillVomCapture } from "./src/browser-skill/vom-adapter";
 import { PROTOCOL_VERSION as browserSkillProtocolVersion } from "./vendor/browser-skill/apps/extension/src/transport/handshake";
 
@@ -60,21 +60,20 @@ const runtimeFiles = [
   "transparent-page.js",
 ];
 
-function emitDirectory(
-  emit: (file: { type: "asset"; fileName: string; source: Buffer }) => void,
+function addPublicDirectory(
+  files: ResolvedPublicFile[],
   directory: string,
   outputRoot: string,
 ) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const absolute = resolve(directory, entry.name);
     if (entry.isDirectory()) {
-      emitDirectory(emit, absolute, outputRoot);
+      addPublicDirectory(files, absolute, outputRoot);
       continue;
     }
-    emit({
-      type: "asset",
-      fileName: relative(outputRoot, absolute).split(sep).join("/"),
-      source: readFileSync(absolute),
+    files.push({
+      absoluteSrc: absolute,
+      relativeDest: relative(outputRoot, absolute).split(sep).join("/"),
     });
   }
 }
@@ -109,6 +108,34 @@ export default defineConfig({
     "@browser-skill/vom": resolve(browserSkillRoot, "packages/vom/src/index.ts"),
   },
   manifest,
+  hooks: {
+    "build:publicAssets"(_wxt, files) {
+      for (const fileName of runtimeFiles) {
+        if (fileName === "popup.js") {
+          files.push({
+            relativeDest: fileName,
+            contents: readRuntimeFile(fileName).toString("utf8"),
+          });
+        } else {
+          files.push({
+            absoluteSrc: resolve(here, fileName),
+            relativeDest: fileName,
+          });
+        }
+      }
+      addPublicDirectory(files, resolve(here, "assets"), here);
+      files.push(
+        {
+          absoluteSrc: resolve(browserSkillExtension, "assets/logo.png"),
+          relativeDest: "icon/logo.png",
+        },
+        {
+          absoluteSrc: resolve(here, "../THIRD_PARTY_NOTICES.md"),
+          relativeDest: "THIRD_PARTY_NOTICES.md",
+        },
+      );
+    },
+  },
   vite: () => ({
     // BrowserSkill is a pinned source submodule. Its own generated .wxt
     // tsconfig is intentionally absent, so prevent Vite/Oxc from walking up
@@ -150,29 +177,6 @@ export default defineConfig({
             return null;
           }
           return { code: adaptBrowserSkillVomCapture(code), map: null };
-        },
-      },
-      {
-        name: "neko-runtime-assets",
-        generateBundle() {
-          for (const fileName of runtimeFiles) {
-            this.emitFile({
-              type: "asset",
-              fileName,
-              source: readRuntimeFile(fileName),
-            });
-          }
-          emitDirectory((file) => this.emitFile(file), resolve(here, "assets"), here);
-          this.emitFile({
-            type: "asset",
-            fileName: "icon/logo.png",
-            source: readFileSync(resolve(browserSkillExtension, "assets/logo.png")),
-          });
-          this.emitFile({
-            type: "asset",
-            fileName: "THIRD_PARTY_NOTICES.md",
-            source: readFileSync(resolve(here, "../THIRD_PARTY_NOTICES.md")),
-          });
         },
       },
     ],

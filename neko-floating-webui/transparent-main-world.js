@@ -5,6 +5,7 @@
   if (
     window.top === window
     || (!isEmbeddedSurface && !isNativeSidePanel)
+    || !FLOATING_BRIDGE_ORIGIN
     || window.__nekoFloatingTransparentMainWorld
   ) {
     return;

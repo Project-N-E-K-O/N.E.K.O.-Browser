@@ -153,8 +153,8 @@ WXT background 会依次安装集成 adapter、初始化 N.E.K.O 后台，再启
 
 ```powershell
 pnpm dev       # WXT 开发模式
-pnpm test      # N.E.K.O CJS + integration Vitest
-pnpm compile   # WXT prepare + TypeScript 检查
+pnpm test      # 运行时 JavaScript 检查 + N.E.K.O CJS + integration Vitest
+pnpm compile   # WXT prepare + 运行时 JavaScript 与 TypeScript 检查
 pnpm build     # 生产构建
 ```
 

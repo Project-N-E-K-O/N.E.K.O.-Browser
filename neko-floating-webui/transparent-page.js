@@ -1,7 +1,12 @@
 (function () {
   const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
   const isNativeSidePanel = window.name === 'neko-native-sidepanel';
-  if (window.top === window || (!isEmbeddedSurface && !isNativeSidePanel)) {
+  const extensionParentOrigin = resolveExtensionParentOrigin();
+  if (
+    window.top === window
+    || (!isEmbeddedSurface && !isNativeSidePanel)
+    || !extensionParentOrigin
+  ) {
     return;
   }
 
@@ -17,6 +22,22 @@
   let forcedReflowPending = false;
   let forcedReflowStartedAt = 0;
   let reflowRetryTimer = 0;
+
+  function resolveExtensionParentOrigin() {
+    const extensionUrl = new URL(chrome.runtime.getURL('/'));
+    const extensionOrigin = `${extensionUrl.protocol}//${extensionUrl.host}`;
+    const candidates = [window.location.ancestorOrigins?.[0], document.referrer];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const parent = new URL(candidate);
+        if (`${parent.protocol}//${parent.host}` === extensionOrigin) {
+          return extensionOrigin;
+        }
+      } catch {}
+    }
+    return '';
+  }
 
   const apply = () => {
     document.documentElement.classList.add(TRANSPARENT_CLASS);
@@ -45,7 +66,7 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (!event.origin.startsWith('chrome-extension://') && !event.origin.startsWith('extension://')) {
+    if (event.source !== window.parent || event.origin !== extensionParentOrigin) {
       return;
     }
 

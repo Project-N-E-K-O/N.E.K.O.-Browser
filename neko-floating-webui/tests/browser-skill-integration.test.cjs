@@ -198,7 +198,9 @@ test('daemon endpoint drives both the runtime constant and extension CSP', () =>
 });
 
 test('production bundle includes the repository third-party notice', () => {
-  assert.match(wxtConfig, /fileName: "THIRD_PARTY_NOTICES\.md"/);
+  assert.match(wxtConfig, /relativeDest: "THIRD_PARTY_NOTICES\.md"/);
   assert.match(wxtConfig, /resolve\(here, "\.\.\/THIRD_PARTY_NOTICES\.md"\)/);
+  assert.match(wxtConfig, /"build:publicAssets"/);
+  assert.doesNotMatch(wxtConfig, /name: "neko-runtime-assets"/);
   assert.ok(fs.existsSync(path.join(projectRoot, '..', 'THIRD_PARTY_NOTICES.md')));
 });
