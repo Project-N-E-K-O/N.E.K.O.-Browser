@@ -45,11 +45,17 @@ test('current-page cookie reader targets the active tab in the popup window', as
     hasCrossSiteAncestor: false
   };
   const cookies = [
-    { name: 'session', value: 'secret', httpOnly: true },
-    { name: 'csrf', value: 'a=b', httpOnly: false }
+    { name: 'session', value: 'secret', domain: '.example.com', path: '/', httpOnly: true },
+    { name: 'csrf', value: 'a=b', domain: 'example.com', path: '/', httpOnly: false }
   ];
   const partitionedCookies = [
-    { name: 'partitioned-session', value: 'partition-secret', partitionKey }
+    {
+      name: 'session',
+      value: 'partition-secret',
+      domain: 'example.com',
+      path: '/path',
+      partitionKey
+    }
   ];
   const response = await getCurrentPageCookies(7, {
     tabs: {
@@ -94,12 +100,85 @@ test('current-page cookie reader targets the active tab in the popup window', as
     page: { title: 'Example', url: 'https://example.com/path?q=1' },
     cookieCount: 3,
     cookieEntries: [
-      { name: 'session', value: 'secret' },
-      { name: 'csrf', value: 'a=b' },
-      { name: 'partitioned-session', value: 'partition-secret' }
+      {
+        name: 'session',
+        value: 'partition-secret',
+        domain: 'example.com',
+        path: '/path',
+        partitioned: true
+      },
+      {
+        name: 'session',
+        value: 'secret',
+        domain: '.example.com',
+        path: '/',
+        partitioned: false
+      },
+      {
+        name: 'csrf',
+        value: 'a=b',
+        domain: 'example.com',
+        path: '/',
+        partitioned: false
+      }
     ],
-    cookieHeader: 'session=secret; csrf=a=b; partitioned-session=partition-secret'
+    cookieHeader: 'session=partition-secret; session=secret; csrf=a=b',
+    cookieHeaderWarning: ''
   });
+});
+
+test('ambiguous cross-partition cookie order suppresses the generated header', async () => {
+  const getCurrentPageCookies = createCookieReader();
+  const partitionKey = {
+    topLevelSite: 'https://example.com',
+    hasCrossSiteAncestor: false
+  };
+  const response = await getCurrentPageCookies(7, {
+    tabs: {
+      async query() {
+        return [{ id: 42, title: 'Example', url: 'https://example.com/account' }];
+      }
+    },
+    cookies: {
+      async getAllCookieStores() {
+        return [{ id: '1', tabIds: [42] }];
+      },
+      async getPartitionKey() {
+        return { partitionKey };
+      },
+      async getAll(query) {
+        return query.partitionKey
+          ? [{
+            name: 'session',
+            value: 'partition-secret',
+            domain: 'example.com',
+            path: '/',
+            partitionKey
+          }]
+          : [{ name: 'session', value: 'secret', domain: '.example.com', path: '/' }];
+      }
+    }
+  });
+
+  assert.equal(response.cookieCount, 2);
+  assert.equal(response.cookieHeader, '');
+  assert.match(response.cookieHeaderWarning, /无法准确还原完整 Header/);
+  assert.deepEqual(response.cookieEntries, [
+    {
+      name: 'session',
+      value: 'secret',
+      domain: '.example.com',
+      path: '/',
+      partitioned: false
+    },
+    {
+      name: 'session',
+      value: 'partition-secret',
+      domain: 'example.com',
+      path: '/',
+      partitioned: true
+    }
+  ]);
 });
 
 test('current-page cookie reader rejects browser-internal pages', async () => {
@@ -129,14 +208,23 @@ test('cookie access is permissioned, extension-page-only, and exposed through th
   assert.match(popupHtml, /id="current-page-cookies-list"/);
   assert.match(popupHtml, /id="copy-current-page-cookies"/);
   assert.match(popup, /type: 'NEKO_GET_CURRENT_PAGE_COOKIES'/);
-  assert.match(background, /cookieHeader: cookies\.map/);
+  assert.match(background, /cookieHeader: cookieHeaderWarning/);
+  assert.match(background, /\? ''\s+: cookies\.map/);
+  assert.match(background, /cookieHeaderWarning/);
   assert.match(background, /cookieEntries: cookies\.map/);
+  assert.match(background, /partitioned: Boolean\(cookie\.partitionKey\)/);
   assert.match(popup, /response\?\.cookieHeader/);
   assert.match(popup, /value\.textContent = '••••••••'/);
   assert.match(popup, /value\.textContent = revealed \? \(cookie\.value \|\| '\(空值\)'\)/);
   assert.match(popup, /clipboard\.writeText\(`\$\{cookie\.name\}=\$\{cookie\.value\}`\)/);
   assert.match(popup, /row\.append\(revealButton, itemCopyButton\)/);
   assert.match(popup, /cookieList\.hidden = cookieEntries\.length === 0/);
+  assert.match(popup, /cookieHeaderForCopy = cookieHeaderWarning \? '' : cookieHeader/);
+  assert.match(popup, /cookieNameCounts\.get\(cookie\.name\)/);
+  assert.match(popup, /cookie\.partitioned \? '分区' : '普通'/);
+  assert.match(popup, /keyGroup\.append\(scope\)/);
+  assert.match(popup, /summary\.hidden = cookieCount === 0/);
+  assert.match(popup, /hint\.textContent = '读取失败，请检查当前页面后重试。'/);
   assert.match(popup, /clipboard\.writeText\(cookieHeaderForCopy\)/);
   assert.doesNotMatch(popup, /JSON\.stringify\(\{/);
 });

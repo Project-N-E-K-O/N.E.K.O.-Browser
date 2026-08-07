@@ -1815,7 +1815,20 @@ async function getCurrentPageCookies(windowId, deps = {}) {
     ...cookieQuery,
     partitionKey: partitionKeyResult.partitionKey
   });
-  const cookies = [...unpartitionedCookies, ...partitionedCookies];
+  const ambiguousCookieNames = new Set(
+    partitionedCookies
+      .filter((partitionedCookie) => unpartitionedCookies.some((unpartitionedCookie) => (
+        unpartitionedCookie.name === partitionedCookie.name
+        && unpartitionedCookie.path === partitionedCookie.path
+        && unpartitionedCookie.value !== partitionedCookie.value
+      )))
+      .map((cookie) => cookie.name)
+  );
+  const cookieHeaderWarning = ambiguousCookieNames.size > 0
+    ? `检测到 ${ambiguousCookieNames.size} 组同名、同路径且值不同的分区 Cookie，无法准确还原完整 Header。请单独查看并复制。`
+    : '';
+  const cookies = [...unpartitionedCookies, ...partitionedCookies]
+    .sort((left, right) => right.path.length - left.path.length);
   return {
     ok: true,
     page: {
@@ -1825,9 +1838,15 @@ async function getCurrentPageCookies(windowId, deps = {}) {
     cookieCount: cookies.length,
     cookieEntries: cookies.map((cookie) => ({
       name: cookie.name,
-      value: cookie.value
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path,
+      partitioned: Boolean(cookie.partitionKey)
     })),
-    cookieHeader: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+    cookieHeader: cookieHeaderWarning
+      ? ''
+      : cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; '),
+    cookieHeaderWarning
   };
 }
 }

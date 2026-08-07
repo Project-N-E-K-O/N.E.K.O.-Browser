@@ -64,7 +64,7 @@ $Bsk = (Resolve-Path '..\N.E.K.O\plugin\plugins\browser_skill\bin\bsk.exe').Path
 popup 中还可以：
 
 - 修改 N.E.K.O 前端地址，并即时重载当前界面。
-- 显式读取当前标签页匹配的 Cookies（包括 HttpOnly），生成并复制可直接用于请求的 `Cookie` Header；弹窗关闭后不会保留数据。
+- 显式读取当前标签页匹配的 Cookies（包括 HttpOnly），通常可生成并复制用于请求的 `Cookie` Header；若分区 Cookie 的顺序无法准确还原，则只提供带作用域标识的逐项查看与复制。弹窗关闭后不会保留数据。
 - 开关模型、聊天框、字幕、任务 HUD 等组件。
 - 设置聊天框模式。
 - 查看 BrowserSkill 连接状态、实例 ID、扩展/daemon/协议版本和错误信息。

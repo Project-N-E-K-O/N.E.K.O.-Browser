@@ -668,6 +668,15 @@ select:focus-visible,
   font-weight: 800;
 }
 
+.cookie-summary[data-state="warning"] {
+  border-color: rgba(218, 145, 31, 0.36);
+  background: rgba(255, 183, 66, 0.12);
+}
+
+.cookie-summary[data-state="warning"] .cookie-summary-check {
+  background: #d9911f;
+}
+
 .cookie-summary-copy {
   display: grid;
   min-width: 0;
@@ -739,6 +748,20 @@ select:focus-visible,
   overflow: hidden;
   color: var(--neko-blue-dark);
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cookie-entry-key-group {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.cookie-entry-scope {
+  overflow: hidden;
+  color: var(--neko-text-sub);
+  font: 8px/1.2 system-ui, sans-serif;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

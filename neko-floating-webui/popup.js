@@ -688,6 +688,7 @@
     );
     const actions = document.getElementById('current-page-cookies-actions');
     const summary = document.getElementById('current-page-cookies-summary');
+    const summaryCheck = document.getElementById('current-page-cookies-summary-check');
     const summaryTitle = document.getElementById('current-page-cookies-summary-title');
     const summaryMeta = document.getElementById('current-page-cookies-summary-meta');
     const cookieList = document.getElementById('current-page-cookies-list');
@@ -726,23 +727,40 @@
         const cookieHeader = typeof response?.cookieHeader === 'string'
           ? response.cookieHeader
           : '';
+        const cookieHeaderWarning = typeof response?.cookieHeaderWarning === 'string'
+          ? response.cookieHeaderWarning
+          : '';
         const cookieCount = Number.isInteger(response?.cookieCount) ? response.cookieCount : 0;
         const cookieEntries = Array.isArray(response?.cookieEntries)
-          ? response.cookieEntries.filter((cookie) => (
-            typeof cookie?.name === 'string' && typeof cookie?.value === 'string'
-          ))
+          ? response.cookieEntries
+            .filter((cookie) => (
+              typeof cookie?.name === 'string' && typeof cookie?.value === 'string'
+            ))
+            .map((cookie) => ({
+              name: cookie.name,
+              value: cookie.value,
+              domain: typeof cookie.domain === 'string' ? cookie.domain : '',
+              path: typeof cookie.path === 'string' ? cookie.path : '',
+              partitioned: cookie.partitioned === true
+            }))
           : [];
+        const cookieNameCounts = new Map();
+        cookieEntries.forEach((cookie) => {
+          cookieNameCounts.set(cookie.name, (cookieNameCounts.get(cookie.name) || 0) + 1);
+        });
         let hostname = '';
         try {
           hostname = new URL(response?.page?.url || '').hostname;
         } catch (_error) {
           hostname = '';
         }
-        cookieHeaderForCopy = cookieHeader;
+        cookieHeaderForCopy = cookieHeaderWarning ? '' : cookieHeader;
         cookieEntries.forEach((cookie) => {
           const row = document.createElement('div');
           const revealButton = document.createElement('button');
+          const keyGroup = document.createElement('span');
           const key = document.createElement('span');
+          const scope = document.createElement('span');
           const separator = document.createElement('span');
           const value = document.createElement('span');
           const action = document.createElement('span');
@@ -750,16 +768,31 @@
           let revealed = false;
           /** @type {number | null} */
           let copyFeedbackTimer = null;
+          const hasDuplicateName = (cookieNameCounts.get(cookie.name) || 0) > 1;
+          const displayName = cookie.name || '(空名称)';
+          const scopeDescription = (
+            `${cookie.partitioned ? '分区' : '普通'} · `
+            + `${cookie.domain || hostname || '当前域'}${cookie.path || '/'}`
+          );
+          const cookieLabel = hasDuplicateName
+            ? `${displayName}（${scopeDescription}）`
+            : displayName;
 
           row.className = 'cookie-entry';
           row.dataset.revealed = 'false';
           revealButton.type = 'button';
           revealButton.className = 'cookie-entry-reveal';
           revealButton.setAttribute('aria-pressed', 'false');
-          revealButton.setAttribute('aria-label', `显示 ${cookie.name} 的值`);
+          revealButton.setAttribute('aria-label', `显示 ${cookieLabel} 的值`);
+          keyGroup.className = 'cookie-entry-key-group';
           key.className = 'cookie-entry-key';
-          key.textContent = cookie.name || '(空名称)';
-          key.title = cookie.name || '(空名称)';
+          key.textContent = displayName;
+          key.title = displayName;
+          scope.className = 'cookie-entry-scope';
+          scope.textContent = scopeDescription;
+          scope.title = scopeDescription;
+          keyGroup.append(key);
+          if (hasDuplicateName) keyGroup.append(scope);
           separator.className = 'cookie-entry-separator';
           separator.textContent = '=';
           value.className = 'cookie-entry-value';
@@ -769,14 +802,16 @@
           itemCopyButton.type = 'button';
           itemCopyButton.className = 'cookie-entry-copy';
           itemCopyButton.textContent = '复制';
-          itemCopyButton.setAttribute('aria-label', `复制 ${cookie.name} Cookie`);
-          itemCopyButton.title = `复制 ${cookie.name}=…`;
+          itemCopyButton.setAttribute('aria-label', `复制 ${cookieLabel} Cookie`);
+          itemCopyButton.title = hasDuplicateName
+            ? `复制 ${cookie.name}=…（${scopeDescription}）`
+            : `复制 ${cookie.name}=…`;
 
           revealButton.addEventListener('click', () => {
             revealed = !revealed;
             row.dataset.revealed = String(revealed);
             revealButton.setAttribute('aria-pressed', String(revealed));
-            revealButton.setAttribute('aria-label', `${revealed ? '隐藏' : '显示'} ${cookie.name} 的值`);
+            revealButton.setAttribute('aria-label', `${revealed ? '隐藏' : '显示'} ${cookieLabel} 的值`);
             value.textContent = revealed ? (cookie.value || '(空值)') : '••••••••';
             action.textContent = revealed ? '隐藏' : '显示';
           });
@@ -796,19 +831,22 @@
             }
           });
 
-          revealButton.append(key, separator, value, action);
+          revealButton.append(keyGroup, separator, value, action);
           row.append(revealButton, itemCopyButton);
           cookieList.append(row);
         });
-        summaryTitle.textContent = 'Cookies 已准备好';
+        summary.dataset.state = cookieHeaderWarning ? 'warning' : 'ready';
+        summaryCheck.textContent = cookieHeaderWarning ? '!' : '✓';
+        summaryTitle.textContent = cookieHeaderWarning ? '无法准确生成完整 Header' : 'Cookies 已准备好';
         summaryMeta.textContent = `${hostname || '当前网站'} · ${cookieCount} 个`;
-        summary.hidden = !cookieHeader;
-        actions.hidden = !cookieHeader;
+        summary.hidden = cookieCount === 0;
+        actions.hidden = !cookieHeaderForCopy;
         cookieList.hidden = cookieEntries.length === 0;
-        hint.textContent = cookieCount > 0
+        hint.textContent = cookieHeaderWarning || (cookieCount > 0
           ? '点击某个键名显示值，再次点击隐藏；关闭弹窗后不会保留。'
-          : '当前页面没有可读取的 Cookies。';
+          : '当前页面没有可读取的 Cookies。');
       } catch (error) {
+        hint.textContent = '读取失败，请检查当前页面后重试。';
         showCookieError(error);
       } finally {
         readButton.disabled = false;
