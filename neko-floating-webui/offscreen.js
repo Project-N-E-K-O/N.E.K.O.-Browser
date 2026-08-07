@@ -23,6 +23,10 @@
     }
 
     if (message.type === 'NEKO_PCM_START') {
+      if (sender?.tab) {
+        sendResponse({ ok: false, error: 'Rejected direct PCM start from a content script.' });
+        return false;
+      }
       handlePcmStart(message.requestId, message.constraints, message.sampleRate)
         .catch((err) => {
           if (err?.name === 'AbortError') {
@@ -37,7 +41,22 @@
     }
 
     if (message.type === 'NEKO_PCM_STOP') {
+      if (sender?.tab) {
+        sendResponse({ ok: false, error: 'Rejected direct PCM stop from a content script.' });
+        return false;
+      }
       cleanupPcmSession(message.requestId);
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message.type === 'NEKO_PCM_STOP_ALL') {
+      if (sender?.tab) {
+        sendResponse({ ok: false, error: 'Rejected direct PCM stop from a content script.' });
+        return false;
+      }
+      cleanupAllPcmSessions();
+      releaseMicStreamIfIdle();
       sendResponse({ ok: true });
       return false;
     }
@@ -49,7 +68,7 @@
     if (!requestId) {
       return;
     }
-    cleanupPcmSession(requestId);
+    cleanupAllPcmSessions();
     console.log('[NEKO-MIC offscreen] PCM start requested:', requestId.substring(0, 8));
 
     const session = {
@@ -275,6 +294,12 @@
     try { session.audioContext.close(); } catch {}
     pcmSessions.delete(requestId);
     scheduleMicReleaseIfIdle();
+  }
+
+  function cleanupAllPcmSessions() {
+    for (const requestId of Array.from(pcmSessions.keys())) {
+      cleanupPcmSession(requestId);
+    }
   }
 
   async function ensureMicStream(constraints) {

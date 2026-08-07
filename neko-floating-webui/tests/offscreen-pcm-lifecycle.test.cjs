@@ -61,6 +61,15 @@ test('a STOP received while getUserMedia is pending cancels PCM startup', async 
   vm.runInContext(source, context);
   assert.equal(typeof runtimeListener, 'function');
 
+  let rejectedResponse = null;
+  runtimeListener(
+    { type: 'NEKO_PCM_START', requestId: 'untrusted-start', constraints: { audio: true } },
+    { tab: { id: 7 } },
+    (response) => { rejectedResponse = response; }
+  );
+  assert.equal(rejectedResponse?.ok, false);
+  assert.equal(resolveStream, undefined, 'content scripts must not reach offscreen PCM directly');
+
   runtimeListener(
     { type: 'NEKO_PCM_START', requestId: 'pending-start', constraints: { audio: true } },
     {},
@@ -71,6 +80,18 @@ test('a STOP received while getUserMedia is pending cancels PCM startup', async 
     {},
     () => {}
   );
+  runtimeListener(
+    { type: 'NEKO_PCM_START', requestId: 'orphaned-start', constraints: { audio: true } },
+    {},
+    () => {}
+  );
+  let stopAllResponse = null;
+  runtimeListener(
+    { type: 'NEKO_PCM_STOP_ALL' },
+    {},
+    (response) => { stopAllResponse = response; }
+  );
+  assert.equal(stopAllResponse?.ok, true);
   resolveStream(stream);
 
   const deadline = Date.now() + 1500;
@@ -79,4 +100,8 @@ test('a STOP received while getUserMedia is pending cancels PCM startup', async 
   }
   assert.equal(audioContextCount, 0, 'cancelled startup must not construct an AudioContext');
   assert.equal(stoppedTracks, 1, 'the late microphone stream must be released');
+  assert.match(
+    source,
+    /async function handlePcmStart\([\s\S]*?cleanupAllPcmSessions\(\)[\s\S]*?pcmSessions\.set\(requestId, session\)/
+  );
 });

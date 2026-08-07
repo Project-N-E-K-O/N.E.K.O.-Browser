@@ -13,10 +13,12 @@ function createHarness(mediaRoutes, ensureOffscreen, sendOffscreenMessage, logge
     'sendOffscreenMessage',
     'console',
     `${extractFunction(background, 'handlePcmStart')}
+     ${extractFunction(background, 'isPcmRouteOwner')}
      ${extractFunction(background, 'handlePcmStop')}
+     ${extractFunction(background, 'stopPcmRoutesExceptTab')}
      ${extractFunction(background, 'stopPcmRoutesForTab')}
      ${extractFunction(background, 'stopOffscreenPcmSession')}
-     return { handlePcmStart, handlePcmStop, stopPcmRoutesForTab };`
+     return { handlePcmStart, handlePcmStop, stopPcmRoutesExceptTab, stopPcmRoutesForTab };`
   )(
     mediaRoutes,
     ensureOffscreen,
@@ -64,11 +66,75 @@ test('PCM routes roll back when startup or shutdown cannot reach offscreen', asy
   await harness.handlePcmStart({ requestId: 'stop-failure', fromFloating: true }, sender);
   assert.equal(mediaRoutes.has('stop-failure'), true);
   ensureError = new Error('offscreen stopped responding');
-  await harness.handlePcmStop({ requestId: 'stop-failure' });
+  await harness.handlePcmStop({ requestId: 'stop-failure' }, sender);
   assert.equal(mediaRoutes.has('stop-failure'), false);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].join(' '), /stop-failure/);
   assert.match(warnings[0].join(' '), /offscreen stopped responding/);
+});
+
+test('PCM is globally singleton and only its owning tab and frame can stop it', async () => {
+  const mediaRoutes = new Map();
+  const sent = [];
+  const harness = createHarness(
+    mediaRoutes,
+    () => Promise.resolve(),
+    (message) => {
+      sent.push(`${message.type}:${message.requestId}`);
+      return Promise.resolve({ ok: true });
+    }
+  );
+  const owner = { tab: { id: 7 }, frameId: 0 };
+  const otherTab = { tab: { id: 8 }, frameId: 0 };
+  const otherFrame = { tab: { id: 7 }, frameId: 1 };
+
+  await harness.handlePcmStart({ requestId: 'first', fromFloating: true }, owner);
+  assert.deepEqual(Array.from(mediaRoutes.keys()), ['first']);
+
+  await assert.rejects(
+    harness.handlePcmStop({ requestId: 'first' }, otherTab),
+    /non-owner tab or frame/
+  );
+  await assert.rejects(
+    harness.handlePcmStop({ requestId: 'first' }, otherFrame),
+    /non-owner tab or frame/
+  );
+  assert.deepEqual(Array.from(mediaRoutes.keys()), ['first']);
+
+  await harness.handlePcmStart({ requestId: 'second', fromFloating: true }, otherTab);
+  assert.deepEqual(Array.from(mediaRoutes.keys()), ['second']);
+  assert.deepEqual(sent, [
+    'NEKO_PCM_START:first',
+    'NEKO_PCM_STOP:first',
+    'NEKO_PCM_START:second'
+  ]);
+
+  await harness.handlePcmStop({ requestId: 'second' }, otherTab);
+  assert.equal(mediaRoutes.size, 0);
+  assert.equal(sent.at(-1), 'NEKO_PCM_STOP:second');
+});
+
+test('panel ownership handoff stops PCM from every non-active tab', async () => {
+  const mediaRoutes = new Map([
+    ['old-owner', { extensionPage: true, tabId: 7, frameId: 0 }]
+  ]);
+  const stopped = [];
+  const harness = createHarness(
+    mediaRoutes,
+    () => Promise.resolve(),
+    (message) => {
+      if (message.type === 'NEKO_PCM_STOP') stopped.push(message.requestId);
+      return Promise.resolve({ ok: true });
+    }
+  );
+
+  await harness.stopPcmRoutesExceptTab(8);
+  assert.equal(mediaRoutes.size, 0);
+  assert.deepEqual(stopped, ['old-owner']);
+  assert.match(
+    background,
+    /async function enforceSingleActivePanel\(activeTabId\)[\s\S]*?stopPcmRoutesExceptTab\(activeTabId\)/
+  );
 });
 
 test('function extraction respects name boundaries and JavaScript brace syntax', () => {

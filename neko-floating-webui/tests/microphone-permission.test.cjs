@@ -64,7 +64,9 @@ test('PCM capture is reachable only through the extension-owned floating frame r
     background.indexOf('\n  return false;', background.indexOf("if (message.type === 'NEKO_PCM_SIGNAL'"))
   );
   assert.match(floatingStartBranch, /isTrustedFloatingPcmMessage\(message, sender\)/);
+  assert.match(floatingStartBranch, /isActiveFloatingPcmSender\(state, sender\)/);
   assert.match(floatingStopBranch, /isTrustedFloatingPcmMessage\(message, sender\)/);
+  assert.match(floatingStopBranch, /}, sender\)/);
   assert.match(offscreenSignalBranch, /isOffscreenSender\(sender\)/);
 
   const isTrustedFloatingPcmMessage = Function(
@@ -77,6 +79,21 @@ test('PCM capture is reachable only through the extension-owned floating frame r
   assert.equal(isTrustedFloatingPcmMessage(validMessage, { ...validSender, frameId: 1 }), false);
   assert.equal(isTrustedFloatingPcmMessage({ requestId: 'x'.repeat(129) }, validSender), false);
   assert.equal(isTrustedFloatingPcmMessage(validMessage, { frameId: 0 }), false);
+
+  const isActiveFloatingPcmSender = Function(
+    `${extractFunction(background, 'isActiveFloatingPcmSender')}; return isActiveFloatingPcmSender;`
+  )();
+  const activeState = {
+    enabled: true,
+    minimized: false,
+    displayMode: 'floating',
+    activeTabId: 7
+  };
+  assert.equal(isActiveFloatingPcmSender(activeState, validSender), true);
+  assert.equal(isActiveFloatingPcmSender(activeState, { tab: { id: 8 }, frameId: 0 }), false);
+  assert.equal(isActiveFloatingPcmSender({ ...activeState, minimized: true }, validSender), false);
+  assert.equal(isActiveFloatingPcmSender({ ...activeState, enabled: false }, validSender), false);
+  assert.equal(isActiveFloatingPcmSender({ ...activeState, displayMode: 'sidebar' }, validSender), false);
 
   const extensionOrigin = 'chrome-extension://test-extension/';
   const isOffscreenSender = Function(

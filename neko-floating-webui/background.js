@@ -34,6 +34,7 @@ let offscreenEnsurePromise = null;
 const OFFSCREEN_PING_TIMEOUT_MS = 1000;
 const OFFSCREEN_MESSAGE_TIMEOUT_MS = 3000;
 const OFFSCREEN_READY_ATTEMPTS = 8;
+const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const PANEL_HANDOFF_UNLOAD_DELAY_MS = 1200;
 const PANEL_SWEEP_ALARM = 'neko-floating-ws-singleton-sweep';
 const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
@@ -41,6 +42,7 @@ const FRAME_BRIDGE_TOKEN_KEY = 'floatingFrameBridgeToken';
 let panelSyncSeq = 0;
 let sidePanelTransition = Promise.resolve();
 let frameBridgeTokenPromise = null;
+const offscreenRecoveryPromise = cleanupOrphanedOffscreenPcmSessions();
 
 chrome.runtime.onInstalled.addListener(async () => {
   const current = await chrome.storage.local.get(null);
@@ -131,6 +133,9 @@ async function handleActionClick(tab) {
 
   if (activeTabId === tab.id) {
     const response = await sendTabMessage(tab.id, { type: 'NEKO_TOGGLE_SINGLETON' });
+    if (!response?.awake) {
+      await stopPcmRoutesForTab(tab.id);
+    }
     await chrome.storage.local.set({
       activeTabId: response?.awake ? tab.id : null,
       enabled: Boolean(response?.visible || response?.awake),
@@ -359,6 +364,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.local.set(payload).catch(() => {});
     }
 
+    if (message.closed || message.minimized === true) {
+      stopPcmRoutesForTab(sender.tab.id).catch(() => {});
+    }
+
     if (payload.activeTabId) {
       enforceSingleActivePanel(payload.activeTabId).catch(() => {});
     }
@@ -391,13 +400,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: 'Rejected untrusted floating PCM request.' });
       return false;
     }
-    handlePcmStart({
-      type: 'NEKO_PCM_START',
-      requestId: message.requestId,
-      constraints: message.constraints,
-      sampleRate: message.sampleRate,
-      fromFloating: true
-    }, sender)
+    getStoredState()
+      .then((state) => {
+        if (!isActiveFloatingPcmSender(state, sender)) {
+          throw new Error('Rejected PCM start from an inactive N.E.K.O tab.');
+        }
+        return handlePcmStart({
+          type: 'NEKO_PCM_START',
+          requestId: message.requestId,
+          constraints: message.constraints,
+          sampleRate: message.sampleRate,
+          fromFloating: true
+        }, sender);
+      })
       .then(() => sendResponse({ ok: true }))
       .catch((e) => {
         const error = normalizeRuntimeError(e);
@@ -414,7 +429,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handlePcmStop({
       type: 'NEKO_PCM_STOP',
       requestId: message.requestId
-    }).then(() => sendResponse({ ok: true }));
+    }, sender)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => {
+        const error = normalizeRuntimeError(e);
+        sendResponse({ ok: false, error: error.message });
+      });
     return true;
   }
 
@@ -657,13 +677,16 @@ async function deactivateSidePanelWindow(windowId) {
 async function deactivateAllTabPanels() {
   const tabs = await chrome.tabs.query({}).catch(() => []);
   let unloadedAny = false;
-  await Promise.all(tabs.map(async (tab) => {
-    if (!tab.id) {
-      return;
-    }
-    const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_CLOSE' });
-    unloadedAny = unloadedAny || response?.unloaded === true;
-  }));
+  await Promise.all([
+    stopPcmRoutesExceptTab(null),
+    ...tabs.map(async (tab) => {
+      if (!tab.id) {
+        return;
+      }
+      const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_CLOSE' });
+      unloadedAny = unloadedAny || response?.unloaded === true;
+    })
+  ]);
   if (unloadedAny) {
     await delay(PANEL_HANDOFF_UNLOAD_DELAY_MS);
   }
@@ -690,7 +713,10 @@ async function ensureContentScript(tabId) {
 }
 
 async function minimizeTabPanel(tabId) {
-  await sendTabMessage(tabId, { type: 'NEKO_FORCE_MINIMIZE' });
+  await Promise.all([
+    sendTabMessage(tabId, { type: 'NEKO_FORCE_MINIMIZE' }),
+    stopPcmRoutesForTab(tabId)
+  ]);
   await chrome.storage.local.set({ activeTabId: null });
 }
 
@@ -776,6 +802,7 @@ async function syncPanelToTab(tabId, syncSeq) {
   }
 
   if (!state.enabled) {
+    await stopPcmRoutesExceptTab(null);
     await chrome.storage.local.set({
       activeTabId: null,
       minimized: true,
@@ -798,6 +825,9 @@ async function syncPanelToTab(tabId, syncSeq) {
     wakeStateInitialized: true
   });
   await enforceSingleActivePanel(tabId);
+  if (minimized) {
+    await stopPcmRoutesForTab(tabId);
+  }
 
   if (syncSeq !== panelSyncSeq) {
     return { ok: false, awake: false };
@@ -851,13 +881,16 @@ async function syncLastFocusedPanel() {
 async function enforceSingleActivePanel(activeTabId) {
   const tabs = await chrome.tabs.query({}).catch(() => []);
   let unloadedAny = false;
-  await Promise.all(tabs.map(async (tab) => {
-    if (!tab.id || tab.id === activeTabId) {
-      return;
-    }
-    const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_MINIMIZE' });
-    unloadedAny = unloadedAny || response?.unloaded === true;
-  }));
+  await Promise.all([
+    stopPcmRoutesExceptTab(activeTabId),
+    ...tabs.map(async (tab) => {
+      if (!tab.id || tab.id === activeTabId) {
+        return;
+      }
+      const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_MINIMIZE' });
+      unloadedAny = unloadedAny || response?.unloaded === true;
+    })
+  ]);
   if (unloadedAny) {
     await delay(PANEL_HANDOFF_UNLOAD_DELAY_MS);
   }
@@ -1116,8 +1149,15 @@ async function handlePcmStart(message, sender) {
     route = { extensionPage: true };
     console.log('[NEKO-MIC background] PCM start:', message.requestId?.substring?.(0, 8), 'extension-page');
   }
+
+  const previousRequestIds = Array.from(mediaRoutes.keys());
+  mediaRoutes.clear();
   mediaRoutes.set(message.requestId, route);
   try {
+    await Promise.all(previousRequestIds.map(stopOffscreenPcmSession));
+    if (mediaRoutes.get(message.requestId) !== route) {
+      return;
+    }
     await ensureOffscreen();
     if (mediaRoutes.get(message.requestId) !== route) {
       return;
@@ -1140,12 +1180,31 @@ async function handlePcmStart(message, sender) {
   }
 }
 
-async function handlePcmStop(message) {
+async function handlePcmStop(message, sender) {
   if (!message.requestId) {
     return;
   }
+  const route = mediaRoutes.get(message.requestId);
+  if (!route) {
+    return;
+  }
+  if (!isPcmRouteOwner(route, sender)) {
+    throw new Error('Rejected PCM stop from a non-owner tab or frame.');
+  }
   mediaRoutes.delete(message.requestId);
   await stopOffscreenPcmSession(message.requestId);
+}
+
+async function stopPcmRoutesExceptTab(activeTabId) {
+  const requestIds = [];
+  for (const [requestId, route] of mediaRoutes) {
+    if (activeTabId !== null && route.tabId === activeTabId) {
+      continue;
+    }
+    mediaRoutes.delete(requestId);
+    requestIds.push(requestId);
+  }
+  await Promise.all(requestIds.map(stopOffscreenPcmSession));
 }
 
 async function stopPcmRoutesForTab(tabId) {
@@ -1211,6 +1270,10 @@ function routeSignalToContent(message) {
 }
 
 async function ensureOffscreen() {
+  const recovery = await offscreenRecoveryPromise;
+  if (!recovery.ok) {
+    throw recovery.error;
+  }
   if (!offscreenEnsurePromise) {
     offscreenEnsurePromise = ensureOffscreenReady().finally(() => {
       offscreenEnsurePromise = null;
@@ -1220,11 +1283,8 @@ async function ensureOffscreen() {
 }
 
 async function ensureOffscreenReady() {
-  if (typeof chrome.offscreen.hasDocument === 'function') {
-    const has = await chrome.offscreen.hasDocument().catch(() => false);
-    if (has && await waitForOffscreenReady()) {
-      return;
-    }
+  if (await hasExistingOffscreenDocument() && await waitForOffscreenReady()) {
+    return;
   }
 
   if (typeof chrome.offscreen.closeDocument === 'function') {
@@ -1250,13 +1310,57 @@ async function ensureOffscreenReady() {
 async function createOffscreenDocument() {
   try {
     await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
+      url: OFFSCREEN_DOCUMENT_PATH,
       reasons: ['USER_MEDIA'],
       justification: 'Capture microphone audio and relay PCM samples to N.E.K.O WebUI.'
     });
   } catch (e) {
     if (!/single offscreen/i.test(String(e?.message || e))) {
       throw e;
+    }
+  }
+}
+
+async function hasExistingOffscreenDocument() {
+  if (typeof chrome.runtime.getContexts === 'function') {
+    try {
+      const contexts = await chrome.runtime.getContexts({
+        contextTypes: ['OFFSCREEN_DOCUMENT'],
+        documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)]
+      });
+      return contexts.length > 0;
+    } catch {}
+  }
+
+  if (typeof chrome.offscreen.hasDocument === 'function') {
+    return chrome.offscreen.hasDocument().catch(() => false);
+  }
+  return false;
+}
+
+async function cleanupOrphanedOffscreenPcmSessions() {
+  if (!await hasExistingOffscreenDocument()) {
+    return { ok: true };
+  }
+
+  try {
+    await sendOffscreenMessage({ type: 'NEKO_PCM_STOP_ALL' });
+    return { ok: true };
+  } catch (stopError) {
+    console.warn(
+      '[NEKO-MIC background] Failed to stop orphaned PCM sessions; closing offscreen document:',
+      String(stopError?.message || stopError)
+    );
+    try {
+      await chrome.offscreen.closeDocument();
+      return { ok: true };
+    } catch (closeError) {
+      const error = new Error(
+        'Unable to clear orphaned offscreen PCM sessions: '
+        + String(closeError?.message || closeError)
+      );
+      console.warn('[NEKO-MIC background]', error.message);
+      return { ok: false, error };
     }
   }
 }
@@ -1329,6 +1433,20 @@ function isTrustedFloatingPcmMessage(message, sender) {
     && typeof message.requestId === 'string'
     && message.requestId.length > 0
     && message.requestId.length <= 128;
+}
+
+function isActiveFloatingPcmSender(state, sender) {
+  return state?.enabled === true
+    && state.minimized === false
+    && state.displayMode !== 'sidebar'
+    && state.activeTabId === sender?.tab?.id
+    && sender.frameId === 0;
+}
+
+function isPcmRouteOwner(route, sender) {
+  return Number.isInteger(route?.tabId)
+    && route.tabId === sender?.tab?.id
+    && route.frameId === sender.frameId;
 }
 
 function isOffscreenSender(sender) {

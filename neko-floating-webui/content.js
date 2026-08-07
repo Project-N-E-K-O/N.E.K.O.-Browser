@@ -2743,7 +2743,24 @@
 
   function handlePcmControlMessage(data) {
     if (data.type === 'NEKO_PCM_START') {
+      const previousRequestIds = Array.from(activePcmRelays)
+        .filter((requestId) => requestId !== data.requestId);
+      activePcmRelays.clear();
       activePcmRelays.add(data.requestId);
+      previousRequestIds.forEach((requestId) => {
+        chrome.runtime.sendMessage({
+          type: 'NEKO_FLOATING_PCM_STOP',
+          requestId
+        }).catch(() => {});
+        postPcmToWebui({
+          type: 'NEKO_PCM_SIGNAL',
+          requestId,
+          error: {
+            name: 'AbortError',
+            message: 'PCM request was replaced by a newer request.'
+          }
+        });
+      });
       console.log('[NEKO-MIC content] PCM start:', data.requestId?.substring?.(0, 8));
       postPcmToWebui({
         type: 'NEKO_PCM_BRIDGE_ACK',
