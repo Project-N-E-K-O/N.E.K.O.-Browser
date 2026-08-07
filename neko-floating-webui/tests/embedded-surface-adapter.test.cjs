@@ -4,9 +4,12 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
-const manifest = JSON.parse(read('manifest.json'));
+const projectRoot = path.resolve(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
+const manifest = JSON.parse(read('src/manifest-base.json'));
+const background = read('background.js');
 const adapter = read('embedded-surface-main-world.js');
+const transparentPage = read('transparent-page.js');
 const css = read('embedded-surface.css');
 
 function functionBlock(name, nextName) {
@@ -22,25 +25,120 @@ function executableFunction(name, nextName, context = {}) {
 }
 
 test('the extension owns and injects the embedded surface adapter', () => {
-  const webScripts = manifest.content_scripts.filter((entry) => (
-    entry.matches.includes('http://*/*') && entry.matches.includes('https://*/*')
-  ));
-  const isolated = webScripts.find((entry) => entry.js?.includes('transparent-page.js'));
-  const mainWorld = webScripts.find((entry) => entry.world === 'MAIN');
+  const staticFiles = manifest.content_scripts.flatMap((entry) => entry.js || []);
+  const resources = manifest.web_accessible_resources.flatMap((entry) => entry.resources || []);
 
-  assert.ok(isolated?.css?.includes('embedded-surface.css'));
-  assert.ok(mainWorld?.js?.includes('embedded-surface-main-world.js'));
-  assert.equal(mainWorld.run_at, 'document_start');
-  assert.equal(mainWorld.all_frames, true);
+  assert.ok(!staticFiles.includes('embedded-surface-main-world.js'));
+  assert.match(background, /js: \['transparent-main-world\.js', 'embedded-surface-main-world\.js'\]/);
+  assert.match(background, /css: \['transparent-page\.css', 'embedded-surface\.css'\]/);
+  assert.match(background, /runAt: 'document_start'/);
+  assert.match(background, /world: 'MAIN'/);
+  assert.ok(!resources.includes('embedded-surface-main-world.js'));
+  assert.doesNotMatch(transparentPage, /createElement\(['"]script['"]\)/);
 });
 
-test('the adapter activates from the extension query marker without host globals', () => {
+test('the adapter requires the embed marker and its injector\'s exact extension origin', () => {
   assert.match(adapter, /params\.get\('surface'\)/);
   assert.match(adapter, /surface !== 'embed'/);
+  assert.match(adapter, /!extensionParentOrigin/);
+  assert.match(adapter, /window\.location\.ancestorOrigins\?\.\[0\] === NEKO_EXTENSION_ORIGIN/);
+  assert.match(adapter, /event\.origin !== extensionParentOrigin/);
+  assert.match(adapter, /window\.parent\.postMessage\([\s\S]*?extensionParentOrigin\)/);
+  assert.doesNotMatch(adapter, /window\.parent\.postMessage\([\s\S]*?['"]\*['"]\s*\)/);
   assert.match(adapter, /params\.get\('components'\)/);
   assert.match(adapter, /document\.documentElement\.classList\.add\('neko-embedded-surface'\)/);
   assert.doesNotMatch(adapter, /__NEKO_EMBEDDED_SURFACE_CONFIG__/);
   assert.doesNotMatch(adapter, /COMPONENT_ALIASES/);
+});
+
+test('authenticated parent commands are consumed before unrelated host message fallbacks', () => {
+  const supportedTypes = [
+    'NEKO_EMBED_CONNECT',
+    'NEKO_EMBED_SET_COMPONENTS',
+    'NEKO_EMBED_SET_COMPONENT',
+    'NEKO_EMBED_SET_CHAT_MODE',
+    'NEKO_EMBED_SET_AVATAR_FORM',
+    'NEKO_EMBED_GET_STATE',
+    'NEKO_EMBED_GET_REGIONS',
+    'NEKO_EMBED_HIT_TEST'
+  ];
+  const parent = {};
+  const extensionParentOrigin = 'chrome-extension://ndkhbmbopodofbilnhiicejdihjpfebj';
+  const start = adapter.indexOf('function onParentMessage(event)');
+  const end = adapter.indexOf('\n    const api =', start);
+  assert.notEqual(start, -1, 'missing onParentMessage');
+  assert.notEqual(end, -1, 'missing end of onParentMessage');
+  const handlerSource = adapter.slice(start, end).trim();
+  const onParentMessage = vm.runInNewContext(`(${handlerSource})`, {
+    extensionParentOrigin,
+    PARENT_MESSAGE_TYPES: supportedTypes,
+    window: { parent }
+  });
+
+  for (const type of supportedTypes) {
+    const stop = new Error(`stop ${type}`);
+    let stopCalls = 0;
+    assert.throws(
+      () => onParentMessage({
+        isTrusted: true,
+        source: parent,
+        origin: extensionParentOrigin,
+        data: { type },
+        stopImmediatePropagation() {
+          stopCalls += 1;
+          throw stop;
+        }
+      }),
+      (error) => error === stop
+    );
+    assert.equal(stopCalls, 1, `${type} must be consumed exactly once`);
+  }
+
+  for (const event of [
+    {
+      isTrusted: true,
+      source: {},
+      origin: extensionParentOrigin,
+      data: { type: 'NEKO_EMBED_GET_REGIONS' }
+    },
+    {
+      isTrusted: true,
+      source: parent,
+      origin: 'chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      data: { type: 'NEKO_EMBED_GET_REGIONS' }
+    },
+    {
+      isTrusted: true,
+      source: parent,
+      origin: extensionParentOrigin,
+      data: { type: 'memory_edited' }
+    },
+    {
+      isTrusted: true,
+      source: parent,
+      origin: extensionParentOrigin,
+      data: { type: 'NEKO_EMBED_UNKNOWN' }
+    },
+    {
+      isTrusted: false,
+      source: parent,
+      origin: extensionParentOrigin,
+      data: { type: 'NEKO_EMBED_GET_REGIONS' }
+    }
+  ]) {
+    onParentMessage(Object.assign(event, {
+      stopImmediatePropagation() {
+        throw new Error(`unexpected consumption of ${event.data.type}`);
+      }
+    }));
+  }
+
+  const allowlistCheck = handlerSource.indexOf('PARENT_MESSAGE_TYPES.includes(data.type)');
+  const stopCall = handlerSource.indexOf('event.stopImmediatePropagation()');
+  const firstHandler = handlerSource.indexOf("data.type === 'NEKO_EMBED_CONNECT'");
+  assert.ok(allowlistCheck >= 0 && allowlistCheck < stopCall);
+  assert.ok(stopCall < firstHandler);
+  assert.match(adapter, /window\.addEventListener\('message', onParentMessage, true\);/);
 });
 
 test('the adapter fixes chat size through the host chat surface API', () => {

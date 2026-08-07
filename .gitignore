@@ -1,2 +1,6 @@
 .trae/
 *.pem
+neko-floating-webui/node_modules/
+neko-floating-webui/.wxt/
+neko-floating-webui/dist/
+neko-floating-webui/coverage/

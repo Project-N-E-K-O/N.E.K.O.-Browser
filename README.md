@@ -1,83 +1,225 @@
-# N.E.K.O 浏览器 WebUI
+# N.E.K.O Browser
 
-这是一个 Chrome/Edge MV3 扩展，用于以浮窗、全屏叠加层或浏览器原生侧栏显示 N.E.K.O WebUI。默认前端地址为 `http://localhost:48911/`，也可以在扩展弹出设置中切换到其他 HTTP/HTTPS 地址。
+N.E.K.O Browser 是一个统一构建的 Chrome/Edge MV3 扩展。它可以用浮窗、全屏叠加层或原生侧栏显示 N.E.K.O WebUI，并在同一个扩展中集成 Tencent BrowserSkill。
 
-## 浏览器要求
+- N.E.K.O 默认地址：`http://localhost:48911/`
+- BrowserSkill daemon：`ws://127.0.0.1:52800`
+- 扩展加载目录：`neko-floating-webui/dist/chrome-mv3`
 
-- Chrome 142 或更高版本。
-- 使用相同 Chromium 能力、支持完整 `chrome.sidePanel` 生命周期 API 的 Microsoft Edge。
-- 扩展会在安装时请求必需的 `sidePanel` 权限；该权限不是可选权限，也不会在运行时再次申请。
+## 快速开始
 
-## 使用方法
+### 环境要求
 
-1. 启动 N.E.K.O，并确认主 WebUI 可通过 `http://localhost:48911/` 访问。
-2. 打开 `chrome://extensions` 或 `edge://extensions`。
-3. 启用开发人员模式并选择**加载解压缩的扩展**。
-4. 选择本目录 `browser-extensions/neko-floating-webui`。
-5. 点击扩展图标，在“浮窗 / 全屏 / 侧栏”之间切换。
+- Chrome 142 或更高版本，或支持完整 `chrome.sidePanel` API 的 Microsoft Edge。
+- Node.js 22.13.0–22.x 或 24.0.0 及以上版本，`pnpm 10.17.0`。
+- 构建使用项目内安装的 WXT 0.20.27，无需全局安装 WXT。
+- 可正常访问的 N.E.K.O WebUI。
+- BrowserSkill `bsk 0.1.9` daemon。
 
-弹出设置顶部的“前端地址”支持填写完整的 HTTP/HTTPS URL，也可以省略协议并默认使用 HTTP。点击“应用地址”后，当前浮窗、全屏或侧栏会立即重载；“恢复默认”会切回 `http://localhost:48911/`。自定义服务必须允许被 iframe 嵌入，且不能通过 `X-Frame-Options` 或页面 CSP 禁止嵌入；HTTPS 网页承载 HTTP 前端时还可能受到浏览器混合内容策略限制。
+### 构建扩展
 
-浏览器决定原生侧栏显示在窗口左侧还是右侧。侧栏模式可以在普通网页、浏览器受限页面以及直接打开的 N.E.K.O 页面旁使用。
+在仓库根目录执行：
 
-## 三种显示模式
+```powershell
+git submodule update --init --recursive
+Set-Location neko-floating-webui
+pnpm install --frozen-lockfile
+pnpm build
+```
 
-- **浮窗**：在普通网页上显示可拖动、可缩放的面板；最小化后只保留唤醒胶囊。
-- **全屏**：透明覆盖整个网页；直接使用 WebUI 原有的猫与聊天框，未被组件覆盖区域中的点击、悬停和滚轮事件会透传给原网页。需要整体隐藏时可从扩展菜单切换。
-- **侧栏**：使用浏览器原生 Side Panel，顶部提供状态、刷新、入口和打开完整页面操作。
+然后打开 `chrome://extensions` 或 `edge://extensions`：
 
-侧栏外壳与 WebUI 内容区保持透明，避免覆盖原网页；顶部工具栏、入口按钮和离线提示会跟随系统首选配色切换浅色/深色样式。
+1. 启用开发人员模式。
+2. 选择“加载解压缩的扩展”。
+3. 加载 `neko-floating-webui/dist/chrome-mv3`。
 
-浮窗和全屏会把外层页面声明的 `color-scheme` 解析成明确的浅色/深色值并同步给 WebUI iframe；未声明配色（`normal`）的页面按浅色处理。侧栏 iframe 则继承浏览器侧栏的配色。这可避免 Chromium 因跨域 iframe 配色不一致而合成不透明白底或黑底。
+源码修改后需要重新运行 `pnpm build`，再到扩展管理页点击“重新加载”。若修改了 content script，还需要刷新已经打开的网页。
 
-切换到侧栏时，扩展会先移除所有网页内面板，再加载侧栏 iframe。离开侧栏时会先卸载侧栏 iframe，再启动浮窗或全屏实例。
+扩展 manifest 固定了开发公钥，因此解压缩构建在不同目录和机器上都会使用同一个扩展 ID。若此前加载的是不含该公钥的旧构建，首次升级时 ID 会迁移一次，旧 ID 下的本地设置和站点授权不会自动带入；请移除旧扩展条目、重新加载并再次设置前端地址。
 
-## 权限与麦克风
+### 启动服务
 
-侧栏 iframe 直接委托麦克风、摄像头、屏幕捕获、剪贴板和本地网络权限。N.E.K.O WebUI 会直接触发浏览器的权限提示，不经过扩展的 offscreen、PCM 或 MessagePort 中继。
+先启动 N.E.K.O，并确认 `http://localhost:48911/` 可以访问。
 
-浮窗和全屏仍沿用原有的 offscreen/PCM 麦克风桥接，以保持已有嵌入行为不变。关闭或切换模式会卸载对应 iframe，并释放媒体会话。
+N.E.K.O 的 Windows 安装包含 BrowserSkill CLI。当前目录布局下，可从仓库根目录启动 daemon：
 
-首次使用浮窗或全屏麦克风前，可在扩展弹出设置中点击“授权麦克风”。扩展会打开独立、可见的授权页；在该页面再次点击“请求麦克风权限”并允许浏览器提示。授权成功后测试音轨会立即停止，隐藏的 offscreen 中继随后复用同一扩展来源的授权。浏览器扩展详情仍可能显示“不需要特殊权限”，因为麦克风属于运行时 Web 权限，而不是 Manifest 安装警告权限。
+```powershell
+$Bsk = (Resolve-Path '..\N.E.K.O\plugin\plugins\browser_skill\bin\bsk.exe').Path
+& $Bsk daemon start
+& $Bsk status
+```
 
-## 单例行为
+如果 N.E.K.O 安装在其他位置，只需修改 `$Bsk`。
 
-扩展在整个浏览器中只允许一个活动 WebUI/WebSocket：
+## 使用扩展
 
-- 浮窗或全屏实例会跟随当前活动标签页，其他标签页只保留最小化状态。
-- 多窗口同时打开原生侧栏时，最后打开的窗口取得所有权，旧窗口会先卸载 WebUI。
-- 浏览器重启后会记住所选模式，但原生侧栏仍需由用户操作打开。
+点击扩展图标，可以选择 N.E.K.O 的显示模式并查看 BrowserSkill 状态。
 
-## 透明模式与调试
+| 模式 | 行为 |
+| --- | --- |
+| 浮窗 | 在当前网页显示可拖动、可缩放的面板；最小化后保留唤醒胶囊。 |
+| 全屏 | 透明覆盖网页；猫、聊天框等组件保持交互，空白区域事件透传给网页。 |
+| 侧栏 | 使用浏览器原生 Side Panel；侧栏位于左侧还是右侧由浏览器决定。 |
 
-嵌入 iframe 时，扩展会向所配置的 WebUI 注入透明样式。适配器只在带有 `surface=embed` 标记的插件 iframe 或原生侧栏 iframe 中启动；直接在普通标签页打开 WebUI 时保留原始页面背景。
+popup 中还可以：
 
-全屏模式会加载宿主原有的 `/?surface=embed` 根页面。这里的查询参数只作为扩展注入适配器的启动标记，宿主无需新增 endpoint、模板变量或静态资源。适配器在页面主世界中提供 `NEKO_EMBED_*` 协议并计算组件区域；iframe 默认不接收指针事件，仅在模型或 UI 区域内启用。模型开始拖拽后会保持交互锁定，直到 `pointerup` 或 `pointercancel`，避免拖拽经过透明区域时中断。若适配器未能初始化，扩展会自动回退为整层交互模式。
+- 修改 N.E.K.O 前端地址，并即时重载当前界面。
+- 开关模型、聊天框、字幕、任务 HUD 等组件。
+- 设置聊天框模式。
+- 查看 BrowserSkill 连接状态、实例 ID、扩展/daemon/协议版本和错误信息。
+- 根据录制目的与起始 URL 生成并复制录制命令。
 
-透明页面初始化会短暂触发重排以适配模型画布；聊天框、字幕、模型、Agent HUD、点歌台或其他已标记的浮动控件正在拖动、缩放时会暂停人工 `resize`，避免宿主的位置恢复逻辑与当前交互争用。
+自定义 WebUI 必须允许 iframe 嵌入，不能被 `X-Frame-Options` 或页面 CSP 阻止。HTTPS 网页嵌入 HTTP WebUI 时，也可能被浏览器的混合内容策略限制。
 
-扩展弹出面板中的“界面组件”可以分别开关模型、聊天框、字幕、模型按钮、任务 HUD 和状态提示。设置会保存到扩展本地存储，并实时同步到当前浮窗或全屏页面；侧栏仍使用自己的独立页面。
+## 使用 BrowserSkill
 
-弹出面板中的“聊天框模式”可以选择跟随页面、固定小聊天框或固定大聊天框。固定模式会调用宿主已有的聊天界面 API，并在页面尝试切换模式时自动恢复；该设置同样只应用于浮窗和全屏页面。
+常用会话命令：
 
-弹幕字幕启用宿主自带的交互穿透时，扩展仍会保留字幕面板边界、控制按钮和设置面板的命中区域，确保可以重新打开设置或关闭弹幕模式。
+```powershell
+& $Bsk status
+& $Bsk session start
+# 记下上一条命令输出的 4 位 session ID，例如 ab12
+$SessionId = 'ab12'
+& $Bsk snapshot --session $SessionId
+& $Bsk screenshot --session $SessionId
+& $Bsk session stop $SessionId
+```
 
-嵌入适配由扩展内的 `embedded-surface-main-world.js` 和 `embedded-surface.css` 实现。宿主仍运行原始 `/` 页面并持有唯一会话；宿主升级后若组件 DOM 结构发生变化，只需更新扩展中的选择器。
+录制示例：
 
-修改扩展文件后，请在扩展管理页点击**重新加载**。`content.js` 发生变化时，还需要刷新已经打开的普通网页。
+```powershell
+& $Bsk record start `
+  --purpose '验证登录流程' `
+  --url 'https://example.com/' `
+  --output '.\trace.json'
+```
 
-如果嵌入页面仍然是黑色，请在当前配置地址的 iframe 中检查：
+`record start` 会打开 Agent Window，并等待浏览器中的录制完成。需要从另一个终端停止时，可以运行：
+
+```powershell
+& $Bsk record stop
+```
+
+## 页面层级与自动化
+
+Agent Window 是 BrowserSkill 管理的外层 Chrome 窗口。N.E.K.O 只能置顶于标签页内容视口，不能覆盖地址栏或标签栏。
+
+```text
+N.E.K.O              z-index: 2147483647
+BrowserSkill overlay z-index: 2147483646
+网页内容             页面原始层级
+```
+
+自动化时，扩展会临时调整 N.E.K.O 的交互状态：
+
+| BrowserSkill 操作 | N.E.K.O 行为 |
+| --- | --- |
+| 坐标点击 | 瞬时穿透，操作结束后恢复。 |
+| 截图 | 瞬时隐藏，截图结束后恢复。 |
+| 快照 / VOM | 保持可见，但从观察结果中排除。 |
+| 录制 | 保持可见，但在整个录制期间不接收指针事件。 |
+
+这些状态由带唯一 `leaseId` 的内部租约管理，支持并发，并在完成、异常、取消、页面重载或 session 结束时清理。
+
+## 开发
+
+扩展本体位于 `neko-floating-webui`；仓库根目录不应直接加载到浏览器。
+
+```text
+neko-floating-webui/
+├─ src/
+│  ├─ entrypoints/          WXT background/content 入口
+│  ├─ browser-skill/        本仓库的集成 adapter
+│  └─ manifest-base.json    Manifest 基础配置
+├─ vendor/browser-skill/    Tencent/BrowserSkill 子模块
+├─ background.js            N.E.K.O 后台模块
+├─ content.js               N.E.K.O 页面运行时
+├─ popup.* / sidepanel.*    popup 与原生侧栏
+├─ offscreen.*              浮窗/全屏麦克风桥接
+├─ wxt.config.ts            统一构建配置
+└─ dist/chrome-mv3/         构建产物，不提交
+```
+
+### WXT 构建架构
+
+当前锁文件使用 WXT 0.20.27。WXT 是项目的本地开发依赖，由 `pnpm install` 自动安装，主要负责：
+
+- 根据 `src/manifest-base.json` 和 `wxt.config.ts` 生成 Chrome MV3 manifest。
+- 从 `src/entrypoints` 打包统一的 background 与 content script 入口。
+- 将 N.E.K.O 运行时资源、BrowserSkill 源码和第三方声明输出到 `dist/chrome-mv3`。
+- 在 `.wxt` 中生成开发和类型检查所需的临时文件；该目录不应提交。
+
+WXT background 会依次安装集成 adapter、初始化 N.E.K.O 后台，再启动 BrowserSkill background。BrowserSkill 源码通过别名参与统一构建，不需要另外加载 BrowserSkill 扩展。popup 使用 `bsk-popup` runtime port 连接 BrowserSkill 后台。
+
+开发命令均在 `neko-floating-webui` 中执行：
+
+```powershell
+pnpm dev       # WXT 开发模式
+pnpm test      # 运行时 JavaScript 检查 + N.E.K.O CJS + integration Vitest
+pnpm compile   # WXT prepare + 运行时 JavaScript 与 TypeScript 检查
+pnpm build     # 生产构建
+```
+
+运行时 JavaScript 检查会阻止新增的类型赋值、属性和参数错误。现有类型债务记录在
+`scripts/runtime-semantic-baseline.json`；修复旧诊断后应同步下调基线，不能提高基线绕过检查。
+
+提交前应运行：
+
+```powershell
+pnpm test
+pnpm compile
+pnpm build
+```
+
+## BrowserSkill 上游策略
+
+BrowserSkill 以 Git 子模块固定在提交：
+
+```text
+93df62a3569203bb8a1880bb3d42e7a8b0914abe
+```
+
+集成的上游扩展源码版本为 `0.1.5`，协议版本为 `1.0`。本仓库不直接修改子模块源码：
+
+- N.E.K.O 兼容逻辑放在 `neko-floating-webui/src/browser-skill`。
+- BrowserSkill 自身缺陷由上游修复。
+- 升级时显式更新子模块提交，并重新运行完整测试、类型检查和生产构建。
+- 更新提交号时同步修改第三方声明。
+
+许可信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 权限与媒体
+
+- `sidePanel` 是必需权限，不会在运行时再次申请。
+- BrowserSkill 需要 `debugger`、`idle`、`notifications`、`tabs`、`webNavigation` 和 `windows` 等权限。
+- 侧栏直接向 WebUI 委托麦克风、摄像头、屏幕捕获、剪贴板和本地网络权限。
+- 浮窗和全屏使用 offscreen/PCM 麦克风桥接。首次使用前，可在 popup 中点击“授权麦克风”。
+
+扩展在整个浏览器中只维持一个活动的 N.E.K.O WebUI/WebSocket，以及一个浮窗/全屏 PCM 会话。PCM 会话绑定创建它的标签页和 frame，新请求会替换并停止旧请求；background Service Worker 重启时会清理无法恢复路由的 offscreen PCM 会话。浮窗和全屏跟随当前活动标签页，多个窗口同时打开侧栏时，最后打开的窗口取得所有权。
+
+## 常见问题
+
+### N.E.K.O 页面出现黑色背景
+
+在嵌入的 WebUI iframe 中检查：
 
 ```js
 document.documentElement.dataset.nekoFloatingTransparent
 document.documentElement.dataset.nekoFloatingTransparentMainWorld
 ```
 
-两项都应为 `enabled`。原生侧栏 iframe 还应满足：
+两项都应为 `enabled`。原生侧栏还应满足：
 
 ```js
-window.name
-document.documentElement.dataset.nekoNativeSidePanel
+window.name === 'neko-native-sidepanel'
+document.documentElement.dataset.nekoNativeSidePanel === 'enabled'
 ```
 
-对应值应为 `neko-native-sidepanel` 和 `enabled`。
+### BrowserSkill 没有连接
+
+依次确认：
+
+1. `& $Bsk status` 显示 daemon 正常运行。
+2. popup 中的 BrowserSkill 开关已启用。
+3. 扩展管理页中加载的是最新的 `dist/chrome-mv3`。
+4. 重新构建后已经重新加载扩展，并刷新目标网页。

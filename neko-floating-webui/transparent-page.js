@@ -1,13 +1,17 @@
 (function () {
   const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
   const isNativeSidePanel = window.name === 'neko-native-sidepanel';
-  if (window.top === window || (!isEmbeddedSurface && !isNativeSidePanel)) {
+  const extensionParentOrigin = resolveExtensionParentOrigin();
+  if (
+    window.top === window
+    || (!isEmbeddedSurface && !isNativeSidePanel)
+    || !extensionParentOrigin
+  ) {
     return;
   }
 
   const TRANSPARENT_CLASS = 'neko-floating-webui-transparent';
   const STYLE_ID = 'neko-floating-webui-transparent-runtime-style';
-  const MAIN_WORLD_SCRIPT_ID = 'neko-floating-webui-transparent-main-world';
   const REFLOW_RETRY_INTERVAL_MS = 250;
   const REFLOW_RETRY_MAX_WAIT_MS = 10000;
   const SIDEPANEL_THEME_MESSAGE = 'NEKO_SIDEBAR_THEME';
@@ -17,6 +21,22 @@
   let forcedReflowPending = false;
   let forcedReflowStartedAt = 0;
   let reflowRetryTimer = 0;
+
+  function resolveExtensionParentOrigin() {
+    const extensionUrl = new URL(chrome.runtime.getURL('/'));
+    const extensionOrigin = `${extensionUrl.protocol}//${extensionUrl.host}`;
+    const candidates = [window.location.ancestorOrigins?.[0], document.referrer];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      try {
+        const parent = new URL(candidate);
+        if (`${parent.protocol}//${parent.host}` === extensionOrigin) {
+          return extensionOrigin;
+        }
+      } catch {}
+    }
+    return '';
+  }
 
   const apply = () => {
     document.documentElement.classList.add(TRANSPARENT_CLASS);
@@ -35,7 +55,6 @@
     }
 
     ensureRuntimeStyle();
-    injectMainWorldScript();
   };
 
   if (document.readyState === 'loading') {
@@ -45,7 +64,12 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (!event.origin.startsWith('chrome-extension://') && !event.origin.startsWith('extension://')) {
+    const fromExtensionParent = event.source === window.parent
+      && event.origin === extensionParentOrigin;
+    const fromMainWorldControlRelay = event.source === window
+      && event.origin === window.location.origin
+      && event.data?._sender === 'extension-parent-control';
+    if (!fromExtensionParent && !fromMainWorldControlRelay) {
       return;
     }
 
@@ -191,18 +215,6 @@
     target.appendChild(style);
   }
 
-  function injectMainWorldScript() {
-    if (document.getElementById(MAIN_WORLD_SCRIPT_ID)) {
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.id = MAIN_WORLD_SCRIPT_ID;
-    script.src = chrome.runtime.getURL('transparent-main-world.js');
-    script.onload = () => script.remove();
-    (document.head || document.documentElement).appendChild(script);
-  }
-
   function requestReflow(force = false) {
     if (force) {
       forcedReflowPending = true;
@@ -275,100 +287,4 @@
     }
   }
 
-  window.addEventListener('message', (event) => {
-    if (event.source !== window) {
-      return;
-    }
-    if (event.origin !== window.location.origin) {
-      return;
-    }
-    const data = event.data;
-    if (!data || typeof data.type !== 'string') {
-      return;
-    }
-    if (data._sender !== 'main') {
-      return;
-    }
-    if (data.type === 'NEKO_MEDIA_REQUEST' || data.type === 'NEKO_MEDIA_SIGNAL' || data.type === 'NEKO_PCM_START' || data.type === 'NEKO_PCM_STOP') {
-      if (data.type === 'NEKO_PCM_START') {
-        window.postMessage({
-          type: 'NEKO_PCM_BRIDGE_ACK',
-          requestId: data.requestId,
-          _sender: 'isolated'
-        }, window.location.origin);
-      }
-      const payload = {
-        type: data.type,
-        requestId: data.requestId,
-        constraints: data.constraints,
-        sdp: data.sdp,
-        ice: data.ice,
-        sampleRate: data.sampleRate
-      };
-      chrome.runtime.sendMessage(payload)
-        .then((response) => {
-          if (response && response.ok === false) {
-            postBridgeError(data, response.error || 'Runtime bridge rejected request');
-          }
-        })
-        .catch((err) => {
-          postBridgeError(data, err);
-        });
-    }
-  });
-
-  function postBridgeError(source, err) {
-    if (!source || !source.requestId || source.type === 'NEKO_PCM_STOP') {
-      return;
-    }
-    const isPcm = source.type.startsWith('NEKO_PCM_');
-    window.postMessage({
-      type: isPcm ? 'NEKO_PCM_SIGNAL' : 'NEKO_MEDIA_SIGNAL',
-      requestId: source.requestId,
-      error: normalizeBridgeError(err),
-      _sender: 'isolated'
-    }, window.location.origin);
-  }
-
-  function normalizeBridgeError(err) {
-    if (err && typeof err === 'object') {
-      return {
-        name: err.name || 'UnknownError',
-        message: err.message || String(err)
-      };
-    }
-    return {
-      name: 'UnknownError',
-      message: String(err || 'Unknown bridge error')
-    };
-  }
-
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || typeof message.type !== 'string') {
-      return false;
-    }
-    if (message.type === 'NEKO_MEDIA_SIGNAL') {
-      window.postMessage({
-        type: 'NEKO_MEDIA_SIGNAL',
-        requestId: message.requestId,
-        sdp: message.sdp,
-        ice: message.ice,
-        error: message.error,
-        _sender: 'isolated'
-      }, window.location.origin);
-    }
-    if (message.type === 'NEKO_PCM_SIGNAL' || message.type === 'NEKO_PCM_CHUNK') {
-      window.postMessage({
-        type: message.type,
-        requestId: message.requestId,
-        ready: message.ready,
-        error: message.error,
-        pcm16: message.pcm16,
-        sampleRate: message.sampleRate,
-        level: message.level,
-        _sender: 'isolated'
-      }, window.location.origin);
-    }
-    return false;
-  });
 })();

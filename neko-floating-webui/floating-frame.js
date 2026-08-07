@@ -191,8 +191,13 @@
     if (!candidate) {
       throw new Error('Invalid WebUI target');
     }
-    const state = await chrome.runtime.sendMessage({ type: 'NEKO_GET_STATE' }).catch(() => null);
-    const configured = normalizeWebuiUrl(state?.webuiUrl) || new URL(DEFAULT_WEBUI_URL);
+    const prepared = await chrome.runtime.sendMessage({
+      type: 'NEKO_PREPARE_WEBUI_INJECTION'
+    }).catch(() => null);
+    if (!prepared?.ok) {
+      throw new Error(prepared?.error || 'WebUI adapters are unavailable');
+    }
+    const configured = normalizeWebuiUrl(prepared.webuiUrl) || new URL(DEFAULT_WEBUI_URL);
     if (candidate.origin !== configured.origin || candidate.pathname !== configured.pathname) {
       throw new Error('WebUI target does not match the configured frontend');
     }

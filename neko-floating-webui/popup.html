@@ -208,6 +208,77 @@
         </div>
         <p class="hint" id="components-hint">开关会立即同步到当前浮窗或全屏页面，并在下次打开时保留。</p>
       </section>
+
+      <section class="section bsk-section" id="browser-skill-section">
+        <div class="section-heading">
+          <span class="section-icon bsk-logo-wrap">
+            <img src="icon/logo.png" alt="" aria-hidden="true">
+          </span>
+          <div class="bsk-heading-copy">
+            <h3>BrowserSkill</h3>
+            <span>本地 Agent 浏览器桥接</span>
+          </div>
+          <button
+            type="button"
+            class="bsk-connection-toggle"
+            id="bsk-connection-toggle"
+            role="switch"
+            aria-checked="true"
+            aria-label="BrowserSkill 连接"
+            title="启用或禁用 BrowserSkill 连接"
+          ><span aria-hidden="true"></span></button>
+        </div>
+
+        <div class="bsk-status-card" data-state="disconnected" id="bsk-status-card">
+          <div class="bsk-status-line" aria-live="polite">
+            <span class="bsk-status-dot" aria-hidden="true"></span>
+            <strong id="bsk-status-label">正在连接</strong>
+            <span class="bsk-status-badge" id="bsk-status-badge">CONNECTING</span>
+          </div>
+          <div class="bsk-instance-line">
+            <span>实例</span>
+            <code id="bsk-instance-id">—</code>
+            <button type="button" class="bsk-mini-button" id="bsk-copy-instance" disabled>复制</button>
+          </div>
+          <div class="bsk-version-line">
+            <span>扩展 <code id="bsk-extension-version">—</code></span>
+            <span>daemon <code id="bsk-daemon-version">—</code></span>
+            <span>协议 <code id="bsk-protocol-version">—</code></span>
+          </div>
+        </div>
+        <p class="bsk-warning" id="bsk-version-warning" hidden></p>
+        <p class="error bsk-error" id="bsk-error" role="alert" hidden></p>
+
+        <details class="bsk-record" id="bsk-record">
+          <summary>录制操作</summary>
+          <p class="hint">生成录制指令并发给 Agent；完成示范后，Agent 可根据 trace 自动执行同类任务。</p>
+          <label class="bsk-field">
+            <span>录制目的</span>
+            <input
+              class="setting-input"
+              id="bsk-record-purpose"
+              type="text"
+              autocomplete="off"
+              placeholder="例如：发布一篇知识库文章"
+            >
+          </label>
+          <label class="bsk-field">
+            <span>起始网址</span>
+            <input
+              class="setting-input"
+              id="bsk-record-url"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="https://example.com/"
+            >
+          </label>
+          <textarea class="bsk-record-prompt" id="bsk-record-prompt" rows="8" readonly></textarea>
+          <button type="button" class="toggle bsk-copy-record" id="bsk-copy-record" disabled>复制录制指令</button>
+          <p class="hint" id="bsk-record-hint">BrowserSkill 连接后可用。</p>
+        </details>
+      </section>
     </main>
 
     <footer class="footer">

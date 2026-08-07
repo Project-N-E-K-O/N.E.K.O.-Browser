@@ -1,5 +1,6 @@
 (() => {
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
+  const BSK_PROTOCOL_VERSION = '__NEKO_BSK_PROTOCOL_VERSION__';
   const modesEl = document.querySelector('.modes');
   const modeButtons = document.querySelectorAll('.modes button');
   const sectionEls = document.querySelectorAll('.section');
@@ -20,6 +21,22 @@
   const authorizeMicrophoneButton = document.getElementById('authorize-microphone');
   const microphonePermissionHintEl = document.getElementById('microphone-permission-hint');
   const componentInputs = document.querySelectorAll('[data-surface-component]');
+  const bskConnectionToggle = document.getElementById('bsk-connection-toggle');
+  const bskStatusCard = document.getElementById('bsk-status-card');
+  const bskStatusLabel = document.getElementById('bsk-status-label');
+  const bskStatusBadge = document.getElementById('bsk-status-badge');
+  const bskInstanceId = document.getElementById('bsk-instance-id');
+  const bskCopyInstance = document.getElementById('bsk-copy-instance');
+  const bskExtensionVersion = document.getElementById('bsk-extension-version');
+  const bskDaemonVersion = document.getElementById('bsk-daemon-version');
+  const bskProtocolVersion = document.getElementById('bsk-protocol-version');
+  const bskVersionWarning = document.getElementById('bsk-version-warning');
+  const bskError = document.getElementById('bsk-error');
+  const bskRecordPurpose = document.getElementById('bsk-record-purpose');
+  const bskRecordUrl = document.getElementById('bsk-record-url');
+  const bskRecordPrompt = document.getElementById('bsk-record-prompt');
+  const bskCopyRecord = document.getElementById('bsk-copy-record');
+  const bskRecordHint = document.getElementById('bsk-record-hint');
   const componentOrder = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
   let currentMode = 'floating';
   let currentComponents = componentOrder.slice();
@@ -30,9 +47,22 @@
   let currentWindowId = null;
   let activeSidePanelWindowId = null;
   let modesReady = false;
+  let bskPort = null;
+  let bskReconnectTimer = 0;
+  let bskLastStableState = 'disconnected';
+  let bskSnapshot = {
+    state: 'connecting',
+    instanceId: '',
+    label: '',
+    extensionVersion: '',
+    handshake: null,
+    lastError: null,
+    connectionEnabled: true
+  };
 
   setupPanelHover();
   setControlsDisabled(true);
+  setupBrowserSkillPanel();
 
   async function refresh() {
     try {
@@ -429,6 +459,184 @@
       option.classList.toggle('selected', selected);
       option.setAttribute('aria-selected', selected ? 'true' : 'false');
     });
+  }
+
+  function setupBrowserSkillPanel() {
+    bskConnectionToggle.disabled = true;
+    connectBrowserSkillPopup();
+    renderBrowserSkill();
+
+    bskConnectionToggle.addEventListener('click', () => {
+      if (!bskPort) return;
+      const enabled = !bskSnapshot.connectionEnabled;
+      bskSnapshot = { ...bskSnapshot, connectionEnabled: enabled };
+      renderBrowserSkill();
+      postBrowserSkillMessage({ kind: 'set_connection_enabled', value: enabled });
+    });
+
+    bskCopyInstance.addEventListener('click', () => {
+      if (!bskSnapshot.instanceId) return;
+      void copyBrowserSkillText(bskSnapshot.instanceId, bskCopyInstance, '已复制');
+    });
+
+    bskRecordPurpose.addEventListener('input', renderBrowserSkillRecordPrompt);
+    bskRecordUrl.addEventListener('input', renderBrowserSkillRecordPrompt);
+    bskCopyRecord.addEventListener('click', () => {
+      if (bskCopyRecord.disabled || !bskRecordPrompt.value) return;
+      void copyBrowserSkillText(bskRecordPrompt.value, bskCopyRecord, '录制指令已复制');
+    });
+  }
+
+  function connectBrowserSkillPopup() {
+    if (bskPort) return;
+    clearTimeout(bskReconnectTimer);
+    try {
+      const port = chrome.runtime.connect({ name: 'bsk-popup' });
+      bskPort = port;
+      bskConnectionToggle.disabled = false;
+      port.onMessage.addListener((message) => {
+        if (message?.kind !== 'snapshot' || !message.data) return;
+        bskSnapshot = message.data;
+        if (bskSnapshot.state !== 'connecting') {
+          bskLastStableState = bskSnapshot.state;
+        }
+        renderBrowserSkill();
+      });
+      port.onDisconnect.addListener(() => {
+        if (bskPort !== port) return;
+        bskPort = null;
+        bskConnectionToggle.disabled = true;
+        bskSnapshot = {
+          ...bskSnapshot,
+          state: 'disconnected',
+          handshake: null,
+          lastError: chrome.runtime.lastError?.message || bskSnapshot.lastError
+        };
+        renderBrowserSkill();
+        bskReconnectTimer = window.setTimeout(connectBrowserSkillPopup, 750);
+      });
+    } catch (error) {
+      bskSnapshot = {
+        ...bskSnapshot,
+        state: 'disconnected',
+        lastError: String(error?.message || error)
+      };
+      renderBrowserSkill();
+      bskReconnectTimer = window.setTimeout(connectBrowserSkillPopup, 750);
+    }
+  }
+
+  function postBrowserSkillMessage(message) {
+    try {
+      bskPort?.postMessage(message);
+    } catch (error) {
+      bskSnapshot = {
+        ...bskSnapshot,
+        lastError: String(error?.message || error)
+      };
+      renderBrowserSkill();
+    }
+  }
+
+  function resolveBrowserSkillStatus() {
+    if (!bskSnapshot.connectionEnabled) return 'disabled';
+    if (bskSnapshot.state === 'version_skew') return 'version_skew';
+    if (bskSnapshot.state === 'connecting') {
+      return bskLastStableState === 'connecting' ? 'disconnected' : bskLastStableState;
+    }
+    return bskSnapshot.state || 'disconnected';
+  }
+
+  function renderBrowserSkill() {
+    const status = resolveBrowserSkillStatus();
+    const labels = {
+      connected: ['已连接', 'CONNECTED'],
+      disconnected: ['未连接', 'OFFLINE'],
+      version_skew: ['协议版本偏差', 'VERSION SKEW'],
+      disabled: ['连接已关闭', 'DISABLED']
+    };
+    const [label, badge] = labels[status] || labels.disconnected;
+    const handshake = bskSnapshot.handshake || {};
+
+    bskStatusCard.dataset.state = status;
+    bskStatusLabel.textContent = label;
+    bskStatusBadge.textContent = badge;
+    bskConnectionToggle.setAttribute('aria-checked', bskSnapshot.connectionEnabled ? 'true' : 'false');
+    bskConnectionToggle.classList.toggle('enabled', Boolean(bskSnapshot.connectionEnabled));
+    bskInstanceId.textContent = bskSnapshot.instanceId || '—';
+    bskCopyInstance.disabled = !bskSnapshot.instanceId;
+    bskExtensionVersion.textContent = bskSnapshot.extensionVersion || '—';
+    bskDaemonVersion.textContent = handshake.version || '—';
+    bskProtocolVersion.textContent = handshake.protocol_version || '—';
+
+    const versionSkew = status === 'version_skew';
+    bskVersionWarning.hidden = !versionSkew;
+    bskVersionWarning.textContent = versionSkew
+      ? `扩展协议 v${BSK_PROTOCOL_VERSION}，daemon 协议 v${handshake.protocol_version || '未知'}。`
+      : '';
+    bskError.hidden = !bskSnapshot.lastError;
+    bskError.textContent = bskSnapshot.lastError || '';
+    renderBrowserSkillRecordPrompt();
+  }
+
+  function renderBrowserSkillRecordPrompt() {
+    const status = resolveBrowserSkillStatus();
+    const ready = (status === 'connected' || status === 'version_skew')
+      && Boolean(bskSnapshot.instanceId);
+    const purpose = bskRecordPurpose.value.trim();
+    const startUrl = bskRecordUrl.value.trim();
+    const commandParts = bskSnapshot.instanceId
+      ? [
+          `& bsk record start --browser ${quotePowerShellArg(bskSnapshot.instanceId)}`,
+          startUrl ? `--url ${quotePowerShellArg(startUrl)}` : '',
+          purpose ? `--purpose ${quotePowerShellArg(purpose)}` : ''
+        ].filter(Boolean)
+      : [];
+    const command = commandParts.join(' ');
+    bskRecordPrompt.value = command
+      ? [
+          '用 BrowserSkill 的 `bsk` CLI 录制我接下来的浏览器操作。',
+          '',
+          '步骤：',
+          `1. 在 PowerShell 中执行：${command}`,
+          '2. 你确认已开始后，我会在打开的窗口里自己操作。',
+          '3. 我点“结束”后，读取返回的 trace.json 并总结操作（pages + steps），不要重跑或“验证”。'
+        ].join('\n')
+      : '';
+    bskCopyRecord.disabled = !ready;
+    bskRecordHint.textContent = ready
+      ? '复制后发送给 Agent，即可开始录制。'
+      : 'BrowserSkill 连接后可用。';
+  }
+
+  function quotePowerShellArg(value) {
+    return `'${String(value).replaceAll("'", "''")}'`;
+  }
+
+  async function copyBrowserSkillText(value, button, successLabel) {
+    if (button.dataset.originalLabel === undefined) {
+      button.dataset.originalLabel = button.textContent || '';
+    }
+    const originalLabel = button.dataset.originalLabel;
+    try {
+      await navigator.clipboard.writeText(value);
+      button.textContent = successLabel;
+      const previousTimer = Number(button.dataset.restoreTimer);
+      if (Number.isFinite(previousTimer)) {
+        window.clearTimeout(previousTimer);
+      }
+      const restoreTimer = window.setTimeout(() => {
+        button.textContent = originalLabel;
+        delete button.dataset.restoreTimer;
+      }, 1500);
+      button.dataset.restoreTimer = String(restoreTimer);
+    } catch (error) {
+      bskSnapshot = {
+        ...bskSnapshot,
+        lastError: `复制失败：${String(error?.message || error)}`
+      };
+      renderBrowserSkill();
+    }
   }
 
   function setupPanelHover() {

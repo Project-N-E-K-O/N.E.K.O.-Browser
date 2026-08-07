@@ -1047,3 +1047,221 @@ select:disabled {
     animation: none;
   }
 }
+
+.bsk-logo-wrap img {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+}
+
+.bsk-heading-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.bsk-connection-toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
+  padding: 0;
+  border: 1px solid rgba(93, 129, 150, 0.3);
+  border-radius: 999px;
+  background: rgba(93, 129, 150, 0.2);
+  cursor: pointer;
+  transition: background 160ms ease, opacity 160ms ease;
+}
+
+.bsk-connection-toggle span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--neko-surface);
+  box-shadow: 0 2px 6px rgba(23, 74, 104, 0.24);
+  transition: transform 160ms ease;
+}
+
+.bsk-connection-toggle.enabled {
+  border-color: rgba(32, 168, 102, 0.46);
+  background: var(--neko-success);
+}
+
+.bsk-connection-toggle.enabled span {
+  transform: translateX(16px);
+}
+
+.bsk-connection-toggle:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.bsk-status-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--neko-border-soft);
+  border-radius: 13px;
+  background: rgba(64, 197, 241, 0.07);
+}
+
+.bsk-status-line,
+.bsk-instance-line,
+.bsk-version-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.bsk-status-line strong {
+  min-width: 0;
+  flex: 1;
+  color: var(--neko-text-strong);
+}
+
+.bsk-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: #91a8b5;
+  box-shadow: 0 0 0 3px rgba(93, 129, 150, 0.1);
+}
+
+.bsk-status-card[data-state="connected"] .bsk-status-dot {
+  background: var(--neko-success);
+  box-shadow: 0 0 0 3px rgba(32, 168, 102, 0.14);
+}
+
+.bsk-status-card[data-state="version_skew"] .bsk-status-dot {
+  background: #e8a02d;
+  box-shadow: 0 0 0 3px rgba(232, 160, 45, 0.14);
+}
+
+.bsk-status-badge {
+  padding: 2px 6px;
+  border: 1px solid var(--neko-border-soft);
+  border-radius: 999px;
+  color: var(--neko-text-sub);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.bsk-instance-line,
+.bsk-version-line {
+  color: var(--neko-text-sub);
+  font-size: 10px;
+}
+
+.bsk-instance-line code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--neko-text-strong);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bsk-mini-button {
+  padding: 3px 8px;
+  border: 1px solid var(--neko-border);
+  border-radius: 8px;
+  background: var(--neko-surface);
+  color: var(--neko-text);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bsk-mini-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.bsk-version-line {
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.bsk-version-line code {
+  color: var(--neko-text-strong);
+}
+
+.bsk-warning {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(232, 160, 45, 0.32);
+  border-radius: 10px;
+  background: rgba(232, 160, 45, 0.1);
+  color: #9a6414;
+  font-size: 10px;
+}
+
+.bsk-error {
+  margin-top: 8px;
+}
+
+.bsk-record {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--neko-border-soft);
+}
+
+.bsk-record summary {
+  color: var(--neko-text-strong);
+  cursor: pointer;
+  font-weight: 800;
+  user-select: none;
+}
+
+.bsk-record[open] summary {
+  margin-bottom: 8px;
+}
+
+.bsk-field {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  color: var(--neko-text-sub);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bsk-record-prompt {
+  width: 100%;
+  margin-top: 9px;
+  padding: 9px;
+  resize: vertical;
+  border: 1px solid var(--neko-border);
+  border-radius: 11px;
+  background: var(--neko-surface-soft);
+  color: var(--neko-text);
+  font: 10px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.bsk-record-prompt:focus-visible {
+  outline: 2px solid var(--neko-blue);
+  outline-offset: 2px;
+}
+
+.bsk-copy-record {
+  margin-top: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .bsk-warning {
+    color: #ffd188;
+  }
+
+  .bsk-mini-button,
+  .bsk-record-prompt {
+    border-color: var(--neko-border);
+    background: var(--neko-surface);
+    color: var(--neko-text-strong);
+  }
+}

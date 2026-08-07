@@ -3,13 +3,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
-const manifest = JSON.parse(read('manifest.json'));
+const projectRoot = path.resolve(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
+const manifest = JSON.parse(read('src/manifest-base.json'));
 const background = read('background.js');
 const content = read('content.js');
 const bridgeHtml = read('floating-frame.html');
 const bridgeCss = read('floating-frame.css');
 const bridge = read('floating-frame.js');
+const transparentMainWorld = read('transparent-main-world.js');
 
 test('floating surfaces navigate to an extension bridge instead of the WebUI origin', () => {
   const resources = manifest.web_accessible_resources.flatMap((entry) => entry.resources || []);
@@ -33,7 +35,7 @@ test('the bridge validates configured targets and both relay directions', () => 
   assert.match(bridge, /event\.source === frame\.contentWindow/);
   assert.match(bridge, /event\.origin !== parentOrigin/);
   assert.match(bridge, /event\.origin !== targetOrigin/);
-  assert.match(bridge, /type: 'NEKO_GET_STATE'/);
+  assert.match(bridge, /type: 'NEKO_PREPARE_WEBUI_INJECTION'/);
   assert.match(bridge, /candidate\.origin !== configured\.origin/);
   assert.match(bridge, /candidate\.pathname !== configured\.pathname/);
   assert.match(bridge, /frame\.contentWindow\.postMessage\(payload, targetOrigin/);
@@ -63,6 +65,13 @@ test('the bridge transfers the microphone port instead of cloning it', () => {
   assert.match(content, /postFrameBridgeMessage\(\{[\s\S]*?type: 'NEKO_PCM_PORT'[\s\S]*?\}, \[channel\.port2\]\)/);
   assert.match(bridge, /Array\.from\(event\.ports \|\| \[\]\)/);
   assert.match(bridge, /data\.type\.startsWith\('NEKO_PCM_'\) && data\._sender === 'floating'/);
+  assert.match(transparentMainWorld, /window\.location\.ancestorOrigins\?\.\[0\] === NEKO_EXTENSION_ORIGIN/);
+  assert.match(transparentMainWorld, /event\.origin === FLOATING_BRIDGE_ORIGIN/);
+  assert.match(transparentMainWorld, /window\.parent\.postMessage\([\s\S]*?FLOATING_BRIDGE_ORIGIN\)/);
+  assert.doesNotMatch(
+    transparentMainWorld,
+    /window\.parent\.postMessage\([\s\S]*?['"]\*['"]\s*\)/
+  );
 });
 
 test('fullscreen loads are health-gated before the WebUI iframe navigates', () => {
@@ -79,6 +88,15 @@ test('fullscreen loads are health-gated before the WebUI iframe navigates', () =
   assert.ok(healthCheck < navigation, 'health must be checked before navigating the WebUI iframe');
   assert.match(loadBlock, /NEKO_FLOATING_FRAME_OFFLINE/);
   assert.match(loadBlock, /frame\.src = 'about:blank'/);
+});
+
+test('the bridge waits for target-scoped adapters before WebUI navigation', () => {
+  const resolveStart = bridge.indexOf('async function resolveAllowedTarget');
+  const resolveEnd = bridge.indexOf('function reloadWebui', resolveStart);
+  const resolveBlock = bridge.slice(resolveStart, resolveEnd);
+  assert.match(resolveBlock, /type: 'NEKO_PREPARE_WEBUI_INJECTION'/);
+  assert.match(resolveBlock, /if \(!prepared\?\.ok\)/);
+  assert.match(resolveBlock, /normalizeWebuiUrl\(prepared\.webuiUrl\)/);
 });
 
 test('the fullscreen health gate times out to the offline fallback', () => {

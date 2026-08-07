@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const source = fs.readFileSync(path.join(__dirname, 'transparent-page.js'), 'utf8');
+const projectRoot = path.resolve(__dirname, '..');
+const source = fs.readFileSync(path.join(projectRoot, 'transparent-page.js'), 'utf8');
 
 function functionBlock(name, nextName) {
   const start = source.indexOf(`function ${name}`);

@@ -3,13 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const read = (name) => fs.readFileSync(path.join(__dirname, name), 'utf8');
+const projectRoot = path.resolve(__dirname, '..');
+const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
 const background = read('background.js');
 const popupHtml = read('popup.html');
 const popup = read('popup.js');
 const popupCss = read('popup.css');
 const content = read('content.js');
-const manifest = JSON.parse(read('manifest.json'));
+const manifest = JSON.parse(read('src/manifest-base.json'));
 
 const components = ['avatar', 'chat', 'subtitle', 'controls', 'agent-hud', 'status'];
 
@@ -18,7 +19,7 @@ test('browser surfaces use PNG variants generated from the N.E.K.O tray icon', (
     const iconPath = `assets/ui/icon_systray_${size}.png`;
     assert.equal(manifest.icons[String(size)], iconPath);
     assert.equal(manifest.action.default_icon[String(size)], iconPath);
-    assert.ok(fs.existsSync(path.join(__dirname, iconPath)));
+    assert.ok(fs.existsSync(path.join(projectRoot, iconPath)));
   }
 });
 

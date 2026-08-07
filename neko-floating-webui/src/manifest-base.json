@@ -1,0 +1,61 @@
+{
+  "name": "N.E.K.O Floating WebUI + BrowserSkill",
+  "description": "Show N.E.K.O in a floating, fullscreen, or side-panel surface and connect local AI agents through BrowserSkill.",
+  "version": "0.3.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA09NapEvdtZRqM6BdtU+HYo1CN1pD04yuEy0eX5bLpgXbSDbY+rRtHQpiJ+P1Mr69n5a60nwiwB8iBQ02KfbyYohAk5WBvr8jvsZF1pO8kdv9vO07uqzmC9LQhIdpoai9RDugCvNC4BbA29ELAkhaAp5HX/+NNcNsH3ymSbjbbFWk5tFgJnb1q2SqkcnpcpOZfl75ok+TBcGusU1t/2qirENJ9IuZqVQ4LshkQCPwkqoV6jCLYdhNpN6vYqT4thsaH8ZNotzA0NOuo4+aI/fGGI7YJkTyh9wuZ+Wm31p79dmCdANy1abO7VxN0Oyk64HrLAdD6GRV5cTaPED2voxwewIDAQAB",
+  "minimum_chrome_version": "142",
+  "icons": {
+    "16": "assets/ui/icon_systray_16.png",
+    "32": "assets/ui/icon_systray_32.png",
+    "48": "assets/ui/icon_systray_48.png",
+    "128": "assets/ui/icon_systray_128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "assets/ui/icon_systray_16.png",
+      "32": "assets/ui/icon_systray_32.png",
+      "48": "assets/ui/icon_systray_48.png",
+      "128": "assets/ui/icon_systray_128.png"
+    },
+    "default_title": "N.E.K.O / BrowserSkill",
+    "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http: https: ws://127.0.0.1:52800; frame-src http: https:;"
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "debugger",
+    "idle",
+    "notifications",
+    "offscreen",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs",
+    "webNavigation",
+    "windows"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "floating-frame.html",
+        "assets/cat-idle-cat1.gif"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
