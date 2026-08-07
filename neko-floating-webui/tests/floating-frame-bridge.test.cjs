@@ -35,7 +35,7 @@ test('the bridge validates configured targets and both relay directions', () => 
   assert.match(bridge, /event\.source === frame\.contentWindow/);
   assert.match(bridge, /event\.origin !== parentOrigin/);
   assert.match(bridge, /event\.origin !== targetOrigin/);
-  assert.match(bridge, /type: 'NEKO_GET_STATE'/);
+  assert.match(bridge, /type: 'NEKO_PREPARE_WEBUI_INJECTION'/);
   assert.match(bridge, /candidate\.origin !== configured\.origin/);
   assert.match(bridge, /candidate\.pathname !== configured\.pathname/);
   assert.match(bridge, /frame\.contentWindow\.postMessage\(payload, targetOrigin/);
@@ -65,8 +65,7 @@ test('the bridge transfers the microphone port instead of cloning it', () => {
   assert.match(content, /postFrameBridgeMessage\(\{[\s\S]*?type: 'NEKO_PCM_PORT'[\s\S]*?\}, \[channel\.port2\]\)/);
   assert.match(bridge, /Array\.from\(event\.ports \|\| \[\]\)/);
   assert.match(bridge, /data\.type\.startsWith\('NEKO_PCM_'\) && data\._sender === 'floating'/);
-  assert.match(transparentMainWorld, /document\.currentScript\?\.getAttribute\('src'\)/);
-  assert.match(transparentMainWorld, /`\$\{referrer\.protocol\}\/\/\$\{referrer\.host\}` === extensionOrigin/);
+  assert.match(transparentMainWorld, /window\.location\.ancestorOrigins\?\.\[0\] === NEKO_EXTENSION_ORIGIN/);
   assert.match(transparentMainWorld, /event\.origin === FLOATING_BRIDGE_ORIGIN/);
   assert.match(transparentMainWorld, /window\.parent\.postMessage\([\s\S]*?FLOATING_BRIDGE_ORIGIN\)/);
   assert.doesNotMatch(
@@ -89,6 +88,15 @@ test('fullscreen loads are health-gated before the WebUI iframe navigates', () =
   assert.ok(healthCheck < navigation, 'health must be checked before navigating the WebUI iframe');
   assert.match(loadBlock, /NEKO_FLOATING_FRAME_OFFLINE/);
   assert.match(loadBlock, /frame\.src = 'about:blank'/);
+});
+
+test('the bridge waits for target-scoped adapters before WebUI navigation', () => {
+  const resolveStart = bridge.indexOf('async function resolveAllowedTarget');
+  const resolveEnd = bridge.indexOf('function reloadWebui', resolveStart);
+  const resolveBlock = bridge.slice(resolveStart, resolveEnd);
+  assert.match(resolveBlock, /type: 'NEKO_PREPARE_WEBUI_INJECTION'/);
+  assert.match(resolveBlock, /if \(!prepared\?\.ok\)/);
+  assert.match(resolveBlock, /normalizeWebuiUrl\(prepared\.webuiUrl\)/);
 });
 
 test('the fullscreen health gate times out to the offline fallback', () => {

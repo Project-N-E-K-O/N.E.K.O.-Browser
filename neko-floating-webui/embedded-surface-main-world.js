@@ -1,17 +1,19 @@
-(function () {
+(function nekoEmbeddedSurfaceMainWorld() {
     'use strict';
 
+    // Derived from src/manifest-base.json#key. Keep both values in sync.
+    const NEKO_EXTENSION_ORIGIN = 'chrome-extension://ndkhbmbopodofbilnhiicejdihjpfebj';
     const params = new URLSearchParams(window.location.search);
     const surface = String(params.get('surface') || '').trim().toLowerCase();
-    const extensionParentOrigin = resolveExtensionParentOrigin();
     if (
         window.top === window
         || surface !== 'embed'
-        || !extensionParentOrigin
         || window.__nekoFloatingEmbeddedSurfaceLoaded
     ) {
         return;
     }
+    const extensionParentOrigin = resolveExtensionParentOrigin();
+    if (!extensionParentOrigin) return;
 
     window.__nekoFloatingEmbeddedSurfaceLoaded = true;
     document.documentElement.classList.add('neko-embedded-surface');
@@ -22,6 +24,16 @@
     const initialAvatarFormRequestId = String(params.get('avatar_request_id') || '').trim() || null;
 
     const PROTOCOL_VERSION = 1;
+    const PARENT_MESSAGE_TYPES = Object.freeze([
+        'NEKO_EMBED_CONNECT',
+        'NEKO_EMBED_SET_COMPONENTS',
+        'NEKO_EMBED_SET_COMPONENT',
+        'NEKO_EMBED_SET_CHAT_MODE',
+        'NEKO_EMBED_SET_AVATAR_FORM',
+        'NEKO_EMBED_GET_STATE',
+        'NEKO_EMBED_GET_REGIONS',
+        'NEKO_EMBED_HIT_TEST'
+    ]);
     const MOBILE_VIEWPORT_MAX_WIDTH = 768;
     const EMBED_DISPLAY_MODES = Object.freeze(['floating', 'fullscreen']);
     const FLOATING_AVATAR_HORIZONTAL_TRIGGER_RATIO = 0.75;
@@ -134,31 +146,9 @@
     const modelPanDragStates = new WeakMap();
 
     function resolveExtensionParentOrigin() {
-        const extensionOrigin = resolveCurrentScriptExtensionOrigin();
-        if (!extensionOrigin) return '';
-        const candidates = [window.location.ancestorOrigins?.[0], document.referrer];
-        for (const candidate of candidates) {
-            if (!candidate) continue;
-            try {
-                const parent = new URL(candidate);
-                if (`${parent.protocol}//${parent.host}` === extensionOrigin) {
-                    return extensionOrigin;
-                }
-            } catch (_) {}
-        }
-        return '';
-    }
-
-    function resolveCurrentScriptExtensionOrigin() {
-        const source = document.currentScript?.getAttribute('src');
-        if (!source) return '';
-        try {
-            const scriptUrl = new URL(source);
-            if (scriptUrl.protocol === 'chrome-extension:' && scriptUrl.host) {
-                return `chrome-extension://${scriptUrl.host}`;
-            }
-        } catch (_) {}
-        return '';
+        return window.location.ancestorOrigins?.[0] === NEKO_EXTENSION_ORIGIN
+            ? NEKO_EXTENSION_ORIGIN
+            : '';
     }
 
     if (requestedAvatarForm === 'cat') {
@@ -1804,10 +1794,19 @@
     }
 
     function onParentMessage(event) {
-        if (event.source !== window.parent || !event.data || typeof event.data.type !== 'string') return;
+        if (
+            !event.isTrusted
+            || event.source !== window.parent
+            || !event.data
+            || typeof event.data.type !== 'string'
+        ) return;
         if (event.origin !== extensionParentOrigin) return;
         const data = event.data;
-        if (!data.type.startsWith('NEKO_EMBED_')) return;
+        if (!PARENT_MESSAGE_TYPES.includes(data.type)) return;
+
+        // The authenticated NEKO_EMBED namespace belongs to this adapter. Consume
+        // it before unrelated host postMessage fallbacks inspect the foreign origin.
+        event.stopImmediatePropagation();
 
         if (data.type === 'NEKO_EMBED_CONNECT') {
             if (data.displayMode !== undefined) setEmbeddedDisplayMode(data.displayMode);
@@ -1902,7 +1901,7 @@
     };
     window.NekoEmbeddedSurface = Object.freeze(api);
 
-    window.addEventListener('message', onParentMessage);
+    window.addEventListener('message', onParentMessage, true);
     window.addEventListener('live2d-goodbye-click', (event) => {
         const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
         requestAvatarForm('cat', detail.avatarFormRequestId, 'host-event');

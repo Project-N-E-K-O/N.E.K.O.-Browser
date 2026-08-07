@@ -28,6 +28,10 @@ const DEFAULT_STATE = {
   },
   webuiUrl: 'http://localhost:48911/'
 };
+const WEBUI_CONTENT_SCRIPT_IDS = Object.freeze([
+  'neko-webui-isolated-adapter',
+  'neko-webui-main-world-adapters'
+]);
 
 const mediaRoutes = new Map();
 let offscreenEnsurePromise = null;
@@ -41,36 +45,54 @@ const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
 const FRAME_BRIDGE_TOKEN_KEY = 'floatingFrameBridgeToken';
 let panelSyncSeq = 0;
 let sidePanelTransition = Promise.resolve();
+let webuiUrlTransition = Promise.resolve();
 let frameBridgeTokenPromise = null;
 const offscreenRecoveryPromise = cleanupOrphanedOffscreenPcmSessions();
+const syncWebuiContentScripts = createWebuiContentScriptRegistrar(chrome.scripting);
+const webuiContentScriptRegistrationReady = chrome.storage.local
+  .get({ webuiUrl: DEFAULT_STATE.webuiUrl })
+  .then((stored) => {
+    const webuiUrl = normalizeNekoUrl(stored.webuiUrl) || DEFAULT_STATE.webuiUrl;
+    return syncWebuiContentScripts(webuiUrl);
+  });
+webuiContentScriptRegistrationReady.catch((error) => {
+  console.warn(
+    '[N.E.K.O Floating] Failed to initialize WebUI adapters:',
+    String(error?.message || error)
+  );
+});
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const current = await chrome.storage.local.get(null);
-  const hasWakeState = Object.prototype.hasOwnProperty.call(current, 'wakeStateInitialized');
-  const minimized = hasWakeState && typeof current.minimized === 'boolean'
-    ? current.minimized
-    : DEFAULT_STATE.minimized;
+  await queueWebuiUrlTransition(async () => {
+    const current = await chrome.storage.local.get();
+    const hasWakeState = Object.prototype.hasOwnProperty.call(current, 'wakeStateInitialized');
+    const minimized = hasWakeState && typeof current.minimized === 'boolean'
+      ? current.minimized
+      : DEFAULT_STATE.minimized;
+    const webuiUrl = normalizeNekoUrl(current.webuiUrl) || DEFAULT_STATE.webuiUrl;
 
-  await chrome.storage.local.set({
-    ...DEFAULT_STATE,
-    ...current,
-    enabled: false,
-    minimized,
-    avatarForm: minimized ? 'cat' : normalizeAvatarForm(current.avatarForm),
-    fullscreenFromCollapsedFloating: false,
-    wakeStateInitialized: true,
-    activeTabId: null,
-    activeSidePanelWindowId: null,
-    displayMode: normalizeDisplayMode(current.displayMode),
-    surfaceComponents: normalizeSurfaceComponents(current.surfaceComponents),
-    chatSurfaceMode: normalizeChatSurfaceMode(current.chatSurfaceMode),
-    webuiUrl: normalizeNekoUrl(current.webuiUrl) || DEFAULT_STATE.webuiUrl,
-    panel: {
-      ...DEFAULT_STATE.panel,
-      ...(current.panel || {})
-    }
+    await prepareWebuiContentScripts(webuiUrl);
+    await chrome.storage.local.set({
+      ...DEFAULT_STATE,
+      ...current,
+      enabled: false,
+      minimized,
+      avatarForm: minimized ? 'cat' : normalizeAvatarForm(current.avatarForm),
+      fullscreenFromCollapsedFloating: false,
+      wakeStateInitialized: true,
+      activeTabId: null,
+      activeSidePanelWindowId: null,
+      displayMode: normalizeDisplayMode(current.displayMode),
+      surfaceComponents: normalizeSurfaceComponents(current.surfaceComponents),
+      chatSurfaceMode: normalizeChatSurfaceMode(current.chatSurfaceMode),
+      webuiUrl,
+      panel: {
+        ...DEFAULT_STATE.panel,
+        ...(current.panel || {})
+      }
+    });
+    schedulePanelSweep();
   });
-  schedulePanelSweep();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -212,6 +234,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'NEKO_PREPARE_WEBUI_INJECTION') {
+    prepareWebuiContentScripts()
+      .then((webuiUrl) => sendResponse({ ok: true, webuiUrl }))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
   if (message.type === 'NEKO_GET_FRAME_BRIDGE_TOKEN') {
     getFrameBridgeToken()
       .then((token) => sendResponse({ ok: true, token }))
@@ -247,8 +276,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     }
 
-    chrome.storage.local.set(payload).then(() => {
+    (async () => {
+      if (payload.webuiUrl) {
+        await setWebuiUrl(payload.webuiUrl);
+        delete payload.webuiUrl;
+      }
+      if (Object.keys(payload).length) {
+        await chrome.storage.local.set(payload);
+      }
       sendResponse({ ok: true });
+    })().catch((error) => {
+      sendResponse({ ok: false, error: String(error?.message || error) });
     });
     return true;
   }
@@ -605,6 +643,7 @@ async function claimSidePanel(windowId) {
 
   panelSyncSeq += 1;
   const state = await getStoredState();
+  await prepareWebuiContentScripts();
   const previousWindowId = normalizeWindowId(state.activeSidePanelWindowId);
 
   if (previousWindowId !== null && previousWindowId !== nextWindowId) {
@@ -1017,33 +1056,49 @@ async function setChatSurfaceMode(value) {
   return { ok: true, chatSurfaceMode };
 }
 
-async function setWebuiUrl(value) {
+function setWebuiUrl(value) {
   const webuiUrl = normalizeNekoUrl(value);
   if (!webuiUrl) {
-    throw new Error('前端地址必须是有效的 HTTP 或 HTTPS 地址。');
+    return Promise.reject(new Error('前端地址必须是有效的 HTTP 或 HTTPS 地址。'));
   }
-  const state = await getStoredState();
-  await chrome.storage.local.set({ webuiUrl });
-
-  const activeTabId = await getLiveActiveTabId(state);
-  if (activeTabId !== null) {
-    const activeTab = await getTab(activeTabId);
-    if (!isInjectableTab(activeTab?.url, webuiUrl)) {
-      await sendTabMessage(activeTabId, { type: 'NEKO_FORCE_CLOSE' });
-      await chrome.storage.local.set({
-        activeTabId: null,
-        minimized: true,
-        avatarForm: 'cat',
-        fullscreenFromCollapsedFloating: false
-      });
-    } else {
-      await sendTabMessage(activeTabId, {
-        type: 'NEKO_APPLY_WEBUI_URL',
-        webuiUrl
-      });
+  return queueWebuiUrlTransition(async () => {
+    const state = await getStoredState();
+    try {
+      await prepareWebuiContentScripts(webuiUrl);
+      await chrome.storage.local.set({ webuiUrl });
+    } catch (transitionError) {
+      const persistedWebuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
+      try {
+        await prepareWebuiContentScripts(persistedWebuiUrl);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [transitionError, rollbackError],
+          '无法更新前端注入配置，也无法恢复先前配置。'
+        );
+      }
+      throw transitionError;
     }
-  }
-  return { ok: true, webuiUrl };
+
+    const activeTabId = await getLiveActiveTabId(state);
+    if (activeTabId !== null) {
+      const activeTab = await getTab(activeTabId);
+      if (!isInjectableTab(activeTab?.url, webuiUrl)) {
+        await sendTabMessage(activeTabId, { type: 'NEKO_FORCE_CLOSE' });
+        await chrome.storage.local.set({
+          activeTabId: null,
+          minimized: true,
+          avatarForm: 'cat',
+          fullscreenFromCollapsedFloating: false
+        });
+      } else {
+        await sendTabMessage(activeTabId, {
+          type: 'NEKO_APPLY_WEBUI_URL',
+          webuiUrl
+        });
+      }
+    }
+    return { ok: true, webuiUrl };
+  });
 }
 
 async function getLiveActiveTabId(state) {
@@ -1120,6 +1175,101 @@ function normalizeNekoUrl(url) {
   } catch {
     return null;
   }
+}
+
+function createWebuiContentScriptRegistrations(webuiUrl) {
+  const normalized = normalizeNekoUrl(webuiUrl) || DEFAULT_STATE.webuiUrl;
+  const parsed = new URL(normalized);
+  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+  const matches = [`${parsed.protocol}//${parsed.hostname}:${port}/*`];
+  return [
+    {
+      id: WEBUI_CONTENT_SCRIPT_IDS[0],
+      matches,
+      css: ['transparent-page.css', 'embedded-surface.css'],
+      js: ['transparent-page.js'],
+      allFrames: true,
+      persistAcrossSessions: true,
+      runAt: 'document_start',
+      world: 'ISOLATED'
+    },
+    {
+      id: WEBUI_CONTENT_SCRIPT_IDS[1],
+      matches,
+      js: ['transparent-main-world.js', 'embedded-surface-main-world.js'],
+      allFrames: true,
+      persistAcrossSessions: true,
+      runAt: 'document_start',
+      world: 'MAIN'
+    }
+  ];
+}
+
+function contentScriptRegistrationMatches(actual, expected) {
+  const sameArray = (left, right) => (
+    Array.isArray(left)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index])
+  );
+  return actual?.id === expected.id
+    && sameArray(actual.matches, expected.matches)
+    && sameArray(actual.js, expected.js)
+    && (expected.css ? sameArray(actual.css, expected.css) : !actual.css?.length)
+    && actual.allFrames === expected.allFrames
+    && actual.persistAcrossSessions === expected.persistAcrossSessions
+    && actual.runAt === expected.runAt
+    && actual.world === expected.world;
+}
+
+function createWebuiContentScriptRegistrar(scripting) {
+  let registrationQueue = Promise.resolve();
+  return function syncRegistration(webuiUrl) {
+    const desired = createWebuiContentScriptRegistrations(webuiUrl);
+    const task = registrationQueue.then(async () => {
+      const existing = await scripting.getRegisteredContentScripts({
+        ids: WEBUI_CONTENT_SCRIPT_IDS.slice()
+      });
+      const existingById = new Map(existing.map((entry) => [entry.id, entry]));
+      const missing = desired.filter((entry) => !existingById.has(entry.id));
+      const stale = desired.filter((entry) => {
+        const current = existingById.get(entry.id);
+        return current && !contentScriptRegistrationMatches(current, entry);
+      });
+      if (stale.length) {
+        await scripting.updateContentScripts(stale);
+      }
+      if (missing.length) {
+        await scripting.registerContentScripts(missing);
+      }
+      return desired;
+    });
+    registrationQueue = task.then(() => {}, () => {});
+    return task;
+  };
+}
+
+function queueWebuiUrlTransition(task) {
+  const transition = webuiUrlTransition.then(task);
+  webuiUrlTransition = transition.then(() => {}, () => {});
+  return transition;
+}
+
+async function prepareWebuiContentScripts(webuiUrl) {
+  await webuiContentScriptRegistrationReady.catch(() => {});
+  if (typeof webuiUrl === 'string') {
+    const normalized = normalizeNekoUrl(webuiUrl);
+    if (!normalized) {
+      throw new Error('前端地址必须是有效的 HTTP 或 HTTPS 地址。');
+    }
+    await syncWebuiContentScripts(normalized);
+    return normalized;
+  }
+  return queueWebuiUrlTransition(async () => {
+    const stored = await getStoredState();
+    const persistedWebuiUrl = normalizeNekoUrl(stored.webuiUrl) || DEFAULT_STATE.webuiUrl;
+    await syncWebuiContentScripts(persistedWebuiUrl);
+    return persistedWebuiUrl;
+  });
 }
 
 async function performHealthCheck() {

@@ -1,6 +1,11 @@
 const path = require('node:path');
 const ts = require('typescript');
 const semanticBaseline = require('./runtime-semantic-baseline.json');
+const {
+  createDiagnosticEnclosingContext,
+  createDiagnosticFingerprint,
+  compareFingerprintMultisets
+} = require('./runtime-semantic-fingerprint.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
 const runtimeFiles = [
@@ -30,6 +35,7 @@ const checkedSemanticCodes = new Set([
   2345 // Argument is not assignable to parameter.
 ]);
 const ratchetedSemanticCodes = new Set([2322, 2339, 2345]);
+const printSemanticBaseline = process.argv.includes('--print-semantic-baseline');
 
 const program = ts.createProgram({
   rootNames: [
@@ -58,29 +64,173 @@ const diagnostics = [
   ...semanticDiagnostics.filter((diagnostic) => !ratchetedSemanticCodes.has(diagnostic.code))
 ];
 
-const semanticCounts = new Map();
-for (const diagnostic of semanticDiagnostics) {
-  if (!ratchetedSemanticCodes.has(diagnostic.code) || !diagnostic.file) continue;
-  const fileName = path.relative(projectRoot, diagnostic.file.fileName).replaceAll('\\', '/');
-  const key = `${fileName}:${diagnostic.code}`;
-  semanticCounts.set(key, (semanticCounts.get(key) || 0) + 1);
+function getRelativeFileName(diagnostic) {
+  if (!diagnostic.file) return '';
+  return path.relative(projectRoot, diagnostic.file.fileName).replaceAll('\\', '/');
 }
 
-for (const fileName of runtimeFiles) {
-  for (const code of ratchetedSemanticCodes) {
-    const expected = Number(semanticBaseline[fileName]?.[code] || 0);
-    const actual = semanticCounts.get(`${fileName}:${code}`) || 0;
-    if (actual === expected) continue;
-    const action = actual < expected
-      ? 'lower the checked-in baseline to preserve the improvement'
-      : 'fix the new diagnostics instead of increasing the checked-in baseline';
+function getDiagnosticSourceLine(diagnostic) {
+  if (!diagnostic.file || diagnostic.start === undefined) return '';
+  const { line } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+  const lineStart = diagnostic.file.getPositionOfLineAndCharacter(line, 0);
+  const lineEnd = line + 1 < diagnostic.file.getLineAndCharacterOfPosition(
+    diagnostic.file.getEnd()
+  ).line + 1
+    ? diagnostic.file.getPositionOfLineAndCharacter(line + 1, 0)
+    : diagnostic.file.getEnd();
+  return diagnostic.file.text.slice(lineStart, lineEnd).trim().replace(/\s+/g, ' ');
+}
+
+function getDiagnosticEnclosingContext(diagnostic) {
+  if (!diagnostic.file || diagnostic.start === undefined) return null;
+  return createDiagnosticEnclosingContext(ts, diagnostic.file, diagnostic.start);
+}
+
+function getSemanticFingerprint(diagnostic) {
+  return createDiagnosticFingerprint({
+    fileName: getRelativeFileName(diagnostic),
+    code: diagnostic.code,
+    messageText: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    sourceLine: getDiagnosticSourceLine(diagnostic),
+    enclosingContext: getDiagnosticEnclosingContext(diagnostic)
+  });
+}
+
+const semanticFingerprints = new Map();
+for (const diagnostic of semanticDiagnostics) {
+  if (!ratchetedSemanticCodes.has(diagnostic.code) || !diagnostic.file) continue;
+  const fileName = getRelativeFileName(diagnostic);
+  const fingerprint = getSemanticFingerprint(diagnostic);
+  const key = `${fileName}\0${diagnostic.code}\0${fingerprint}`;
+  const entry = semanticFingerprints.get(key) || {
+    fileName,
+    code: diagnostic.code,
+    fingerprint,
+    diagnostics: [],
+    count: 0
+  };
+  entry.count += 1;
+  entry.diagnostics.push(diagnostic);
+  semanticFingerprints.set(key, entry);
+}
+
+function createSemanticGroups() {
+  const groups = new Map();
+  for (const entry of semanticFingerprints.values()) {
+    const key = `${entry.fileName}\0${entry.code}`;
+    const group = groups.get(key) || {
+      fileName: entry.fileName,
+      code: entry.code,
+      count: 0,
+      fingerprintCounts: new Map(),
+      fingerprintDiagnostics: new Map()
+    };
+    group.count += entry.count;
+    group.fingerprintCounts.set(entry.fingerprint, entry.count);
+    group.fingerprintDiagnostics.set(entry.fingerprint, entry.diagnostics);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+const semanticGroups = createSemanticGroups();
+
+function serializeSemanticBaseline() {
+  const serialized = { version: 2, diagnostics: {} };
+  const groups = [...semanticGroups.values()].sort((left, right) => (
+    left.fileName.localeCompare(right.fileName) || left.code - right.code
+  ));
+  for (const group of groups) {
+    const fileDiagnostics = serialized.diagnostics[group.fileName] ||= {};
+    fileDiagnostics[group.code] = {
+      fingerprints: Object.fromEntries(
+        [...group.fingerprintCounts].sort(([left], [right]) => left.localeCompare(right))
+      )
+    };
+  }
+  return serialized;
+}
+
+if (printSemanticBaseline) {
+  process.stdout.write(`${JSON.stringify(serializeSemanticBaseline(), null, 2)}\n`);
+  process.exit(0);
+}
+
+const expectedGroups = new Map();
+if (semanticBaseline.version !== 2 || !semanticBaseline.diagnostics) {
+  diagnostics.push({
+    category: ts.DiagnosticCategory.Error,
+    code: 0,
+    file: undefined,
+    start: undefined,
+    length: undefined,
+    messageText: 'runtime-semantic-baseline.json must use fingerprint multiset baseline version 2.'
+  });
+} else {
+  for (const [fileName, codes] of Object.entries(semanticBaseline.diagnostics)) {
+    for (const [codeText, baselineGroup] of Object.entries(codes)) {
+      const code = Number(codeText);
+      const key = `${fileName}\0${code}`;
+      expectedGroups.set(key, {
+        fileName,
+        code,
+        fingerprintCounts: new Map(
+          Object.entries(baselineGroup.fingerprints || {}).map(([fingerprint, count]) => (
+            [fingerprint, Number(count)]
+          ))
+        )
+      });
+    }
+  }
+}
+
+for (const entry of expectedGroups.values()) {
+  if (!runtimeFiles.includes(entry.fileName) || !ratchetedSemanticCodes.has(entry.code)) {
+    diagnostics.push({
+      category: ts.DiagnosticCategory.Error,
+      code: entry.code,
+      file: undefined,
+      start: undefined,
+      length: undefined,
+      messageText: `Fingerprint baseline contains unsupported entry ${entry.fileName}:TS${entry.code}.`
+    });
+  }
+}
+
+const semanticGroupKeys = new Set([...expectedGroups.keys(), ...semanticGroups.keys()]);
+for (const key of semanticGroupKeys) {
+  const expected = expectedGroups.get(key);
+  const actual = semanticGroups.get(key);
+  const fileName = actual?.fileName || expected.fileName;
+  const code = actual?.code || expected.code;
+  const difference = compareFingerprintMultisets(
+    expected?.fingerprintCounts || new Map(),
+    actual?.fingerprintCounts || new Map()
+  );
+
+  for (const [fingerprint, count] of difference.added) {
+    const addedDiagnostics = actual.fingerprintDiagnostics.get(fingerprint) || [];
+    diagnostics.push(...addedDiagnostics.slice(0, count));
     diagnostics.push({
       category: ts.DiagnosticCategory.Error,
       code,
       file: undefined,
       start: undefined,
       length: undefined,
-      messageText: `${fileName} diagnostic TS${code} count changed from ${expected} to ${actual}; ${action}.`
+      messageText: `${fileName} has ${count} new TS${code} diagnostic fingerprint ${fingerprint}; fix the located diagnostic instead of adding it to the baseline.`
+    });
+  }
+
+  for (const [fingerprint, count] of difference.removed) {
+    diagnostics.push({
+      category: ts.DiagnosticCategory.Error,
+      code,
+      file: undefined,
+      start: undefined,
+      length: undefined,
+      messageText: `${fileName} resolved ${count} baseline TS${code} diagnostic fingerprint ${fingerprint}; remove that fingerprint from the checked-in baseline to preserve the improvement.`
     });
   }
 }

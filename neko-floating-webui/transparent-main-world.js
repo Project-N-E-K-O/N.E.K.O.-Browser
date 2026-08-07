@@ -1,15 +1,17 @@
 (function () {
+  // Derived from src/manifest-base.json#key. Keep both values in sync.
+  const NEKO_EXTENSION_ORIGIN = 'chrome-extension://ndkhbmbopodofbilnhiicejdihjpfebj';
   const isEmbeddedSurface = new URLSearchParams(location.search).get('surface') === 'embed';
   const isNativeSidePanel = window.name === 'neko-native-sidepanel';
-  const FLOATING_BRIDGE_ORIGIN = resolveFloatingBridgeOrigin();
   if (
     window.top === window
     || (!isEmbeddedSurface && !isNativeSidePanel)
-    || !FLOATING_BRIDGE_ORIGIN
     || window.__nekoFloatingTransparentMainWorld
   ) {
     return;
   }
+  const FLOATING_BRIDGE_ORIGIN = resolveFloatingBridgeOrigin();
+  if (!FLOATING_BRIDGE_ORIGIN) return;
 
   window.__nekoFloatingTransparentMainWorld = true;
   document.documentElement.dataset.nekoFloatingTransparentMainWorld = 'enabled';
@@ -435,32 +437,9 @@
   }
 
   function resolveFloatingBridgeOrigin() {
-    const extensionOrigin = resolveCurrentScriptExtensionOrigin();
-    if (!extensionOrigin) return '';
-    const ancestorOrigin = window.location.ancestorOrigins?.[0];
-    const candidates = [ancestorOrigin, document.referrer];
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      try {
-        const referrer = new URL(candidate);
-        if (`${referrer.protocol}//${referrer.host}` === extensionOrigin) {
-          return extensionOrigin;
-        }
-      } catch {}
-    }
-    return '';
-  }
-
-  function resolveCurrentScriptExtensionOrigin() {
-    const source = document.currentScript?.getAttribute('src');
-    if (!source) return '';
-    try {
-      const scriptUrl = new URL(source);
-      if (scriptUrl.protocol === 'chrome-extension:' && scriptUrl.host) {
-        return `chrome-extension://${scriptUrl.host}`;
-      }
-    } catch {}
-    return '';
+    return window.location.ancestorOrigins?.[0] === NEKO_EXTENSION_ORIGIN
+      ? NEKO_EXTENSION_ORIGIN
+      : '';
   }
 
   function attachFloatingPcmPort(port) {

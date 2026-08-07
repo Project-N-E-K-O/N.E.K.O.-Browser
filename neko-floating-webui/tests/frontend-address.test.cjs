@@ -26,6 +26,7 @@ test('popup exposes save and reset controls for the frontend address', () => {
 
 test('background validates, persists, and applies the selected address', () => {
   assert.match(background, /message\.type === 'NEKO_SET_WEBUI_URL'/);
+  assert.match(background, /await prepareWebuiContentScripts\(webuiUrl\)/);
   assert.match(background, /chrome\.storage\.local\.set\(\{ webuiUrl \}\)/);
   assert.match(background, /type: 'NEKO_APPLY_WEBUI_URL'/);
   assert.match(background, /parsed\.protocol !== 'http:' && parsed\.protocol !== 'https:'/);
@@ -46,17 +47,17 @@ test('custom HTTP and HTTPS frames can load while adapters stay target-scoped', 
   assert.match(manifest.content_security_policy.extension_pages, /connect-src http: https:/);
   assert.match(manifest.content_security_policy.extension_pages, /frame-src http: https:/);
 
-  const isolated = manifest.content_scripts.find((entry) => entry.js?.includes('transparent-page.js'));
-  assert.ok(isolated.matches.includes('http://*/*'));
-  assert.ok(isolated.matches.includes('https://*/*'));
-  assert.equal(isolated.all_frames, true);
-  assert.equal(
-    manifest.content_scripts.some((entry) => entry.world === 'MAIN'),
-    false,
-    'MAIN-world adapters must be injected only after isolated extension-origin authorization'
-  );
-  assert.match(transparentPage, /injectMainWorldScript\('transparent-main-world\.js'\)/);
-  assert.match(transparentPage, /injectMainWorldScript\('embedded-surface-main-world\.js'\)/);
+  const staticAdapter = manifest.content_scripts.find((entry) => (
+    entry.js?.includes('transparent-page.js') || entry.world === 'MAIN'
+  ));
+  assert.equal(staticAdapter, undefined);
+  assert.match(background, /const port = parsed\.port \|\| \(parsed\.protocol === 'https:' \? '443' : '80'\)/);
+  assert.match(background, /const matches = \[`\$\{parsed\.protocol\}\/\/\$\{parsed\.hostname\}:\$\{port\}\/\*`\]/);
+  assert.match(background, /persistAcrossSessions: true/);
+  assert.match(background, /runAt: 'document_start'/);
+  assert.match(background, /world: 'ISOLATED'/);
+  assert.match(background, /world: 'MAIN'/);
+  assert.doesNotMatch(transparentPage, /createElement\(['"]script['"]\)/);
 
   for (const script of [transparentPage, transparentMainWorld]) {
     assert.match(script, /params\)\.get\('surface'\)|URLSearchParams\(location\.search\)\.get\('surface'\)/);

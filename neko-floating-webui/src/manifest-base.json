@@ -2,6 +2,7 @@
   "name": "N.E.K.O Floating WebUI + BrowserSkill",
   "description": "Show N.E.K.O in a floating, fullscreen, or side-panel surface and connect local AI agents through BrowserSkill.",
   "version": "0.3.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA09NapEvdtZRqM6BdtU+HYo1CN1pD04yuEy0eX5bLpgXbSDbY+rRtHQpiJ+P1Mr69n5a60nwiwB8iBQ02KfbyYohAk5WBvr8jvsZF1pO8kdv9vO07uqzmC9LQhIdpoai9RDugCvNC4BbA29ELAkhaAp5HX/+NNcNsH3ymSbjbbFWk5tFgJnb1q2SqkcnpcpOZfl75ok+TBcGusU1t/2qirENJ9IuZqVQ4LshkQCPwkqoV6jCLYdhNpN6vYqT4thsaH8ZNotzA0NOuo4+aI/fGGI7YJkTyh9wuZ+Wm31p79dmCdANy1abO7VxN0Oyk64HrLAdD6GRV5cTaPED2voxwewIDAQAB",
   "minimum_chrome_version": "142",
   "icons": {
     "16": "assets/ui/icon_systray_16.png",
@@ -46,21 +47,11 @@
       "js": ["content.js"],
       "run_at": "document_idle",
       "all_frames": false
-    },
-    {
-      "matches": ["http://*/*", "https://*/*"],
-      "css": ["transparent-page.css", "embedded-surface.css"],
-      "js": ["transparent-page.js"],
-      "run_at": "document_start",
-      "all_frames": true
     }
   ],
   "web_accessible_resources": [
     {
       "resources": [
-        "transparent-page.css",
-        "transparent-main-world.js",
-        "embedded-surface-main-world.js",
         "floating-frame.html",
         "assets/cat-idle-cat1.gif"
       ],
