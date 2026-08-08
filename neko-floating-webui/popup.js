@@ -2,19 +2,23 @@
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
   const BSK_PROTOCOL_VERSION = '__NEKO_BSK_PROTOCOL_VERSION__';
   const modesEl = document.querySelector('.modes');
+  /** @type {NodeListOf<HTMLButtonElement>} */
   const modeButtons = document.querySelectorAll('.modes button');
   const sectionEls = document.querySelectorAll('.section');
   const toggleButton = document.getElementById('toggle');
   const hintEl = document.getElementById('hint');
   const errorEl = document.getElementById('error');
   const componentsHintEl = document.getElementById('components-hint');
+  /** @type {HTMLSelectElement} */
   const chatSurfaceModeEl = document.getElementById('chat-surface-mode');
   const chatModeDropdownEl = document.getElementById('chat-mode-dropdown');
   const chatModeDropdownTrigger = document.getElementById('chat-mode-dropdown-trigger');
   const chatModeDropdownCurrent = chatModeDropdownEl.querySelector('.chat-mode-dropdown-current');
   const chatModeDropdownMenu = document.getElementById('chat-mode-dropdown-menu');
+  /** @type {HTMLButtonElement[]} */
   const chatModeDropdownOptions = Array.from(chatModeDropdownMenu.querySelectorAll('.chat-mode-dropdown-option'));
   const chatModeHintEl = document.getElementById('chat-mode-hint');
+  /** @type {HTMLInputElement} */
   const webuiUrlEl = document.getElementById('webui-url');
   const saveWebuiUrlButton = document.getElementById('save-webui-url');
   const resetWebuiUrlButton = document.getElementById('reset-webui-url');
@@ -167,7 +171,7 @@
             windowId: currentWindowId
           });
           assertOk(response);
-          await chrome.sidePanel.close({ windowId: currentWindowId });
+          await (/** @type {*} */ (chrome.sidePanel)).close({ windowId: currentWindowId });
         } else {
           const openPromise = chrome.sidePanel.open({ windowId: currentWindowId });
           const modePromise = chrome.runtime.sendMessage({
@@ -220,7 +224,9 @@
       clearError();
       setControlsDisabled(true);
       const next = componentOrder.filter((component) => {
-        const target = document.querySelector(`[data-surface-component="${component}"]`);
+        const target = /** @type {HTMLInputElement} */ (
+          document.querySelector(`[data-surface-component="${component}"]`)
+        );
         return target?.checked === true;
       });
       try {
@@ -266,7 +272,9 @@
 
   chatModeDropdownMenu.addEventListener('keydown', (event) => {
     const enabledOptions = chatModeDropdownOptions.filter((option) => !option.disabled);
-    const currentIndex = enabledOptions.indexOf(document.activeElement);
+    const currentIndex = enabledOptions.indexOf(
+      /** @type {HTMLButtonElement} */ (document.activeElement)
+    );
     let targetIndex = null;
     if (event.key === 'ArrowDown') {
       targetIndex = (currentIndex + 1) % enabledOptions.length;
@@ -289,7 +297,7 @@
   });
 
   document.addEventListener('click', (event) => {
-    if (!chatModeDropdownEl.contains(event.target)) {
+    if (!chatModeDropdownEl.contains(/** @type {Node} */ (event.target))) {
       setChatModeDropdownOpen(false);
     }
   });
@@ -671,5 +679,197 @@
     setControlsDisabled(false);
   }
 
+  function setupCurrentPageCookies() {
+    const readButton = /** @type {HTMLButtonElement} */ (
+      document.getElementById('read-current-page-cookies')
+    );
+    const copyButton = /** @type {HTMLButtonElement} */ (
+      document.getElementById('copy-current-page-cookies')
+    );
+    const actions = document.getElementById('current-page-cookies-actions');
+    const summary = document.getElementById('current-page-cookies-summary');
+    const summaryCheck = document.getElementById('current-page-cookies-summary-check');
+    const summaryTitle = document.getElementById('current-page-cookies-summary-title');
+    const summaryMeta = document.getElementById('current-page-cookies-summary-meta');
+    const cookieList = document.getElementById('current-page-cookies-list');
+    const hint = document.getElementById('current-page-cookies-hint');
+    const errorEl = document.getElementById('current-page-cookies-error');
+    let cookieHeaderForCopy = '';
+
+    function clearCookieError() {
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+    }
+
+    function showCookieError(error) {
+      errorEl.textContent = String(error?.message || error || '读取 Cookies 失败。');
+      errorEl.hidden = false;
+    }
+
+    readButton.disabled = false;
+    readButton.addEventListener('click', async () => {
+      clearCookieError();
+      cookieHeaderForCopy = '';
+      cookieList.replaceChildren();
+      summary.hidden = true;
+      actions.hidden = true;
+      cookieList.hidden = true;
+      hint.textContent = '正在读取当前标签页 Cookies…';
+      readButton.disabled = true;
+      copyButton.disabled = true;
+      readButton.textContent = '正在读取…';
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'NEKO_GET_CURRENT_PAGE_COOKIES',
+          windowId: currentWindowId
+        });
+        assertOk(response);
+        const cookieHeader = typeof response?.cookieHeader === 'string'
+          ? response.cookieHeader
+          : '';
+        const cookieHeaderWarning = typeof response?.cookieHeaderWarning === 'string'
+          ? response.cookieHeaderWarning
+          : '';
+        const cookieCount = Number.isInteger(response?.cookieCount) ? response.cookieCount : 0;
+        const cookieEntries = Array.isArray(response?.cookieEntries)
+          ? response.cookieEntries
+            .filter((cookie) => (
+              typeof cookie?.name === 'string' && typeof cookie?.value === 'string'
+            ))
+            .map((cookie) => ({
+              name: cookie.name,
+              value: cookie.value,
+              domain: typeof cookie.domain === 'string' ? cookie.domain : '',
+              path: typeof cookie.path === 'string' ? cookie.path : '',
+              partitioned: cookie.partitioned === true
+            }))
+          : [];
+        const cookieNameCounts = new Map();
+        cookieEntries.forEach((cookie) => {
+          cookieNameCounts.set(cookie.name, (cookieNameCounts.get(cookie.name) || 0) + 1);
+        });
+        let hostname = '';
+        try {
+          hostname = new URL(response?.page?.url || '').hostname;
+        } catch (_error) {
+          hostname = '';
+        }
+        cookieHeaderForCopy = cookieHeaderWarning ? '' : cookieHeader;
+        cookieEntries.forEach((cookie) => {
+          const row = document.createElement('div');
+          const revealButton = document.createElement('button');
+          const keyGroup = document.createElement('span');
+          const key = document.createElement('span');
+          const scope = document.createElement('span');
+          const separator = document.createElement('span');
+          const value = document.createElement('span');
+          const action = document.createElement('span');
+          const itemCopyButton = document.createElement('button');
+          let revealed = false;
+          /** @type {number | null} */
+          let copyFeedbackTimer = null;
+          const hasDuplicateName = (cookieNameCounts.get(cookie.name) || 0) > 1;
+          const displayName = cookie.name || '(空名称)';
+          const scopeDescription = (
+            `${cookie.partitioned ? '分区' : '普通'} · `
+            + `${cookie.domain || hostname || '当前域'}${cookie.path || '/'}`
+          );
+          const cookieLabel = hasDuplicateName
+            ? `${displayName}（${scopeDescription}）`
+            : displayName;
+
+          row.className = 'cookie-entry';
+          row.dataset.revealed = 'false';
+          revealButton.type = 'button';
+          revealButton.className = 'cookie-entry-reveal';
+          revealButton.setAttribute('aria-pressed', 'false');
+          revealButton.setAttribute('aria-label', `显示 ${cookieLabel} 的值`);
+          keyGroup.className = 'cookie-entry-key-group';
+          key.className = 'cookie-entry-key';
+          key.textContent = displayName;
+          key.title = displayName;
+          scope.className = 'cookie-entry-scope';
+          scope.textContent = scopeDescription;
+          scope.title = scopeDescription;
+          keyGroup.append(key);
+          if (hasDuplicateName) keyGroup.append(scope);
+          separator.className = 'cookie-entry-separator';
+          separator.textContent = '=';
+          value.className = 'cookie-entry-value';
+          value.textContent = '••••••••';
+          action.className = 'cookie-entry-action';
+          action.textContent = '显示';
+          itemCopyButton.type = 'button';
+          itemCopyButton.className = 'cookie-entry-copy';
+          itemCopyButton.textContent = '复制';
+          itemCopyButton.setAttribute('aria-label', `复制 ${cookieLabel} Cookie`);
+          itemCopyButton.title = hasDuplicateName
+            ? `复制 ${cookie.name}=…（${scopeDescription}）`
+            : `复制 ${cookie.name}=…`;
+
+          revealButton.addEventListener('click', () => {
+            revealed = !revealed;
+            row.dataset.revealed = String(revealed);
+            revealButton.setAttribute('aria-pressed', String(revealed));
+            revealButton.setAttribute('aria-label', `${revealed ? '隐藏' : '显示'} ${cookieLabel} 的值`);
+            value.textContent = revealed ? (cookie.value || '(空值)') : '••••••••';
+            action.textContent = revealed ? '隐藏' : '显示';
+          });
+
+          itemCopyButton.addEventListener('click', async () => {
+            clearCookieError();
+            try {
+              await navigator.clipboard.writeText(`${cookie.name}=${cookie.value}`);
+              itemCopyButton.textContent = '已复制';
+              if (copyFeedbackTimer !== null) window.clearTimeout(copyFeedbackTimer);
+              copyFeedbackTimer = window.setTimeout(() => {
+                itemCopyButton.textContent = '复制';
+                copyFeedbackTimer = null;
+              }, 1500);
+            } catch (error) {
+              showCookieError(new Error(`复制失败：${String(error?.message || error)}`));
+            }
+          });
+
+          revealButton.append(keyGroup, separator, value, action);
+          row.append(revealButton, itemCopyButton);
+          cookieList.append(row);
+        });
+        summary.dataset.state = cookieHeaderWarning ? 'warning' : 'ready';
+        summaryCheck.textContent = cookieHeaderWarning ? '!' : '✓';
+        summaryTitle.textContent = cookieHeaderWarning ? '无法准确生成完整 Header' : 'Cookies 已准备好';
+        summaryMeta.textContent = `${hostname || '当前网站'} · ${cookieCount} 个`;
+        summary.hidden = cookieCount === 0;
+        actions.hidden = !cookieHeaderForCopy;
+        cookieList.hidden = cookieEntries.length === 0;
+        hint.textContent = cookieHeaderWarning || (cookieCount > 0
+          ? '点击某个键名显示值，再次点击隐藏；关闭弹窗后不会保留。'
+          : '当前页面没有可读取的 Cookies。');
+      } catch (error) {
+        hint.textContent = '读取失败，请检查当前页面后重试。';
+        showCookieError(error);
+      } finally {
+        readButton.disabled = false;
+        copyButton.disabled = !cookieHeaderForCopy;
+        readButton.textContent = '重新获取 Cookies';
+      }
+    });
+
+    copyButton.addEventListener('click', async () => {
+      if (!cookieHeaderForCopy) return;
+      clearCookieError();
+      try {
+        await navigator.clipboard.writeText(cookieHeaderForCopy);
+        copyButton.textContent = '已复制';
+        window.setTimeout(() => {
+          copyButton.textContent = '复制 Cookie Header';
+        }, 1500);
+      } catch (error) {
+        showCookieError(new Error(`复制失败：${String(error?.message || error)}`));
+      }
+    });
+  }
+
+  setupCurrentPageCookies();
   refresh();
 })();

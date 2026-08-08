@@ -1757,4 +1757,96 @@ function isPcmRouteOwner(route, sender) {
 function isOffscreenSender(sender) {
   return sender?.url === chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH) && !sender.tab;
 }
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'NEKO_GET_CURRENT_PAGE_COOKIES') {
+    return false;
+  }
+  if (!isExtensionPageSender(sender)) {
+    sendResponse({ ok: false, error: '仅扩展页面可以读取当前页面 Cookies。' });
+    return false;
+  }
+  getCurrentPageCookies(message.windowId)
+    .then(sendResponse)
+    .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+  return true;
+});
+
+function isExtensionPageSender(sender) {
+  return sender?.id === chrome.runtime.id && !sender.tab;
+}
+
+async function getCurrentPageCookies(windowId, deps = {}) {
+  const tabsApi = deps.tabs || chrome.tabs;
+  const cookiesApi = deps.cookies || chrome.cookies;
+  const normalizedWindowId = normalizeWindowId(windowId);
+  const query = normalizedWindowId === null
+    ? { active: true, lastFocusedWindow: true }
+    : { active: true, windowId: normalizedWindowId };
+  const [tab] = await tabsApi.query(query);
+  const pageUrl = typeof tab?.url === 'string' ? tab.url : '';
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(pageUrl);
+  } catch {
+    throw new Error('无法确定当前页面地址。');
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error('当前页面不支持读取 Cookies，请打开 HTTP 或 HTTPS 页面后重试。');
+  }
+
+  if (!Number.isInteger(tab?.id)) {
+    throw new Error('无法确定当前标签页。');
+  }
+  const stores = await cookiesApi.getAllCookieStores();
+  const currentStore = stores.find((store) => store.tabIds.includes(tab.id));
+  if (!currentStore) {
+    throw new Error('无法确定当前标签页的 Cookie 存储区。');
+  }
+  const cookieQuery = {
+    url: parsedUrl.toString(),
+    storeId: currentStore.id
+  };
+  const [unpartitionedCookies, partitionKeyResult] = await Promise.all([
+    cookiesApi.getAll(cookieQuery),
+    cookiesApi.getPartitionKey({ tabId: tab.id, frameId: 0 })
+  ]);
+  const partitionedCookies = await cookiesApi.getAll({
+    ...cookieQuery,
+    partitionKey: partitionKeyResult.partitionKey
+  });
+  const ambiguousCookieNames = new Set(
+    partitionedCookies
+      .filter((partitionedCookie) => unpartitionedCookies.some((unpartitionedCookie) => (
+        unpartitionedCookie.name === partitionedCookie.name
+        && unpartitionedCookie.path === partitionedCookie.path
+        && unpartitionedCookie.value !== partitionedCookie.value
+      )))
+      .map((cookie) => cookie.name)
+  );
+  const cookieHeaderWarning = ambiguousCookieNames.size > 0
+    ? `检测到 ${ambiguousCookieNames.size} 组同名、同路径且值不同的分区 Cookie，无法准确还原完整 Header。请单独查看并复制。`
+    : '';
+  const cookies = [...unpartitionedCookies, ...partitionedCookies]
+    .sort((left, right) => right.path.length - left.path.length);
+  return {
+    ok: true,
+    page: {
+      title: typeof tab?.title === 'string' ? tab.title : '',
+      url: parsedUrl.toString()
+    },
+    cookieCount: cookies.length,
+    cookieEntries: cookies.map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path,
+      partitioned: Boolean(cookie.partitionKey)
+    })),
+    cookieHeader: cookieHeaderWarning
+      ? ''
+      : cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; '),
+    cookieHeaderWarning
+  };
+}
 }

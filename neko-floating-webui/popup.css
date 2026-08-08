@@ -270,6 +270,16 @@ select:focus-visible,
   height: 30px;
 }
 
+.section-icon svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .section-heading h3 {
   margin: 0;
   color: var(--neko-blue-deep);
@@ -628,6 +638,187 @@ select:focus-visible,
 
 .permission-button[data-state="denied"]:hover {
   background: linear-gradient(90deg, #f58794, var(--neko-danger-dark));
+}
+
+.cookie-read-button {
+  margin-top: 0;
+}
+
+.cookie-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+  padding: 10px 12px;
+  border: 1.5px solid rgba(32, 168, 102, 0.3);
+  border-radius: 12px;
+  background: rgba(53, 202, 126, 0.1);
+}
+
+.cookie-summary-check {
+  display: grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--neko-success);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.cookie-summary[data-state="warning"] {
+  border-color: rgba(218, 145, 31, 0.36);
+  background: rgba(255, 183, 66, 0.12);
+}
+
+.cookie-summary[data-state="warning"] .cookie-summary-check {
+  background: #d9911f;
+}
+
+.cookie-summary-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.cookie-summary-copy strong {
+  color: var(--neko-text-strong);
+  font-size: 12px;
+}
+
+.cookie-summary-copy span {
+  overflow: hidden;
+  color: var(--neko-text-sub);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cookie-list {
+  display: grid;
+  max-height: 220px;
+  margin-top: 9px;
+  overflow: auto;
+  border: 1.5px solid var(--neko-border);
+  border-radius: 12px;
+  background: var(--neko-surface-soft);
+}
+
+.cookie-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 50px;
+  align-items: stretch;
+  width: 100%;
+  min-height: 34px;
+  border-bottom: 1px solid rgba(64, 197, 241, 0.14);
+  background: transparent;
+}
+
+.cookie-entry-reveal {
+  display: grid;
+  grid-template-columns: minmax(70px, 112px) 10px minmax(0, 1fr) 34px;
+  align-items: center;
+  min-width: 0;
+  padding: 7px 4px 7px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--neko-text);
+  font: 10px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cookie-entry:last-child {
+  border-bottom: 0;
+}
+
+.cookie-entry:hover {
+  background: rgba(42, 188, 241, 0.1);
+}
+
+.cookie-entry-reveal:focus-visible,
+.cookie-entry-copy:focus-visible {
+  outline: 2px solid var(--neko-blue);
+  outline-offset: -2px;
+}
+
+.cookie-entry-key {
+  overflow: hidden;
+  color: var(--neko-blue-dark);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cookie-entry-key-group {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.cookie-entry-scope {
+  overflow: hidden;
+  color: var(--neko-text-sub);
+  font: 8px/1.2 system-ui, sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cookie-entry-separator {
+  color: var(--neko-text-sub);
+  text-align: center;
+}
+
+.cookie-entry-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--neko-text-sub);
+  letter-spacing: 1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cookie-entry[data-revealed="true"] .cookie-entry-value {
+  overflow: visible;
+  color: var(--neko-text-strong);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cookie-entry-action {
+  color: var(--neko-blue-dark);
+  font-family: inherit;
+  font-size: 9.5px;
+  text-align: right;
+}
+
+.cookie-entry-copy {
+  align-self: center;
+  min-width: 44px;
+  min-height: 24px;
+  margin-right: 6px;
+  padding: 3px 4px;
+  border: 1px solid rgba(42, 188, 241, 0.28);
+  border-radius: 7px;
+  background: rgba(42, 188, 241, 0.08);
+  color: var(--neko-blue-dark);
+  font-size: 9px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cookie-entry-copy:hover {
+  border-color: var(--neko-blue);
+  background: rgba(42, 188, 241, 0.18);
+}
+
+.cookie-summary[hidden],
+.cookie-list[hidden],
+.cookie-actions[hidden] {
+  display: none;
 }
 
 .modes {
@@ -1263,5 +1454,10 @@ select:disabled {
     border-color: var(--neko-border);
     background: var(--neko-surface);
     color: var(--neko-text-strong);
+  }
+
+  .cookie-list {
+    border-color: var(--neko-border);
+    background: var(--neko-surface);
   }
 }
