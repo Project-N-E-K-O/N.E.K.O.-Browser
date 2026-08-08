@@ -8,6 +8,8 @@
   const MINIMIZED_SIZE = { width: 96, height: 96 };
   const MIN_SIZE = { width: 320, height: 420 };
   const WAKE_DRAG_THRESHOLD = 4;
+  const WAKE_TRANSITION_DURATION_MS = 620;
+  const PANEL_DISMISS_DURATION_MS = 260;
   const WAKE_IMAGE_URL = chrome.runtime.getURL('assets/cat-idle-cat1.webp');
   const FRAME_BRIDGE_URL = chrome.runtime.getURL('floating-frame.html');
   const FRAME_BRIDGE_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
@@ -87,6 +89,11 @@
   let fullscreenWakePosition = null;
   let suppressWakeClick = false;
   let suppressWakeClickTimer = 0;
+  let wakeTransitionTimer = 0;
+  let wakeTransitionEndHandler = null;
+  let wakeTransitionCat = null;
+  // 视觉动画可以被打断，但最小化、关闭等业务收尾不能因此丢失。
+  let wakeTransitionPendingFinish = null;
 
   const activePcmRelays = new Set();
   let pcmWebuiPort = null;
@@ -593,6 +600,209 @@
         cursor: grabbing;
       }
 
+      #${PANEL_ID}[data-wake-transition="waiting"] #${WAKE_ID} {
+        cursor: progress;
+        pointer-events: none;
+      }
+
+      #${PANEL_ID}[data-wake-transition="waiting"] #${WAKE_ID} .wake-art {
+        animation: wake-launch-ready 520ms ease-in-out infinite alternate;
+        filter: drop-shadow(0 8px 12px rgba(56, 189, 248, 0.2));
+      }
+
+      #${PANEL_ID}[data-wake-transition="opening"] .toolbar,
+      #${PANEL_ID}[data-wake-transition="opening"] .content,
+      #${PANEL_ID}[data-wake-transition="opening"] .resize {
+        animation: wake-content-reveal 300ms 70ms both ease-out;
+      }
+
+      #${PANEL_ID}[data-wake-transition="opening"] {
+        transform-origin: top left;
+        animation: wake-panel-open ${WAKE_TRANSITION_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      #${PANEL_ID}[data-wake-transition="minimizing"] {
+        pointer-events: none;
+        transform-origin: top left;
+        animation: wake-panel-minimize ${WAKE_TRANSITION_DURATION_MS}ms cubic-bezier(0.4, 0, 0.2, 1) both;
+      }
+
+      #${PANEL_ID}[data-wake-transition="closing"] {
+        pointer-events: none;
+        transform-origin: center;
+        animation: wake-panel-dismiss ${PANEL_DISMISS_DURATION_MS}ms ease-in both;
+      }
+
+      #${PANEL_ID}[data-wake-transition="minimizing"] .toolbar,
+      #${PANEL_ID}[data-wake-transition="minimizing"] .content,
+      #${PANEL_ID}[data-wake-transition="minimizing"] .resize,
+      #${PANEL_ID}[data-wake-transition="closing"] .toolbar,
+      #${PANEL_ID}[data-wake-transition="closing"] .content,
+      #${PANEL_ID}[data-wake-transition="closing"] .resize {
+        animation: wake-content-hide 260ms both ease-in;
+      }
+
+      .wake-transition-cat {
+        position: fixed;
+        z-index: 2147483647;
+        box-sizing: border-box;
+        pointer-events: none;
+        transform-origin: center;
+        animation: wake-cat-launch 420ms cubic-bezier(0.4, 0, 0.2, 1) both;
+      }
+
+      .wake-transition-cat[data-direction="minimizing"] {
+        animation: wake-cat-return ${WAKE_TRANSITION_DURATION_MS}ms ease-out both;
+      }
+
+      .wake-transition-cat img {
+        position: relative;
+        z-index: 1;
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .wake-transition-cat::after {
+        content: '';
+        position: absolute;
+        inset: 14%;
+        border: 3px solid rgba(56, 189, 248, 0.72);
+        border-radius: 50%;
+        box-shadow: 0 0 28px rgba(56, 189, 248, 0.42);
+        animation: wake-transition-ring 420ms ease-out both;
+      }
+
+      @keyframes wake-launch-ready {
+        from {
+          transform: translateY(1px) scale(0.96);
+        }
+        to {
+          transform: translateY(-3px) scale(1.035);
+        }
+      }
+
+      @keyframes wake-content-reveal {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes wake-panel-open {
+        0% {
+          background-color: rgba(240, 249, 255, 0.94);
+          box-shadow:
+            0 0 0 10px rgba(56, 189, 248, 0.18),
+            0 16px 46px rgba(14, 165, 233, 0.38);
+          opacity: 0.48;
+          transform:
+            translate(var(--neko-wake-translate-x), var(--neko-wake-translate-y))
+            scale(var(--neko-wake-scale-x), var(--neko-wake-scale-y));
+        }
+        76% {
+          background-color: rgba(248, 252, 255, 0.72);
+          box-shadow: 0 22px 58px rgba(14, 165, 233, 0.26);
+          opacity: 1;
+          transform: translate(0, 0) scale(1.025, 1.018);
+        }
+        100% {
+          background-color: rgba(255, 255, 255, 0);
+          box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+          opacity: 1;
+          transform: translate(0, 0) scale(1, 1);
+        }
+      }
+
+      @keyframes wake-panel-minimize {
+        0% {
+          background-color: rgba(255, 255, 255, 0);
+          box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+          opacity: 1;
+          transform: translate(0, 0) scale(1, 1);
+        }
+        24% {
+          background-color: rgba(248, 252, 255, 0.72);
+          box-shadow: 0 20px 52px rgba(14, 165, 233, 0.24);
+          transform: translate(0, 0) scale(1.018, 1.012);
+        }
+        100% {
+          border-color: transparent;
+          background-color: rgba(240, 249, 255, 0);
+          box-shadow: 0 0 24px rgba(56, 189, 248, 0.16);
+          opacity: 0;
+          transform:
+            translate(var(--neko-wake-translate-x), var(--neko-wake-translate-y))
+            scale(var(--neko-wake-scale-x), var(--neko-wake-scale-y));
+        }
+      }
+
+      @keyframes wake-panel-dismiss {
+        from {
+          filter: blur(0);
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+        to {
+          filter: blur(2px);
+          opacity: 0;
+          transform: translateY(12px) scale(0.94);
+        }
+      }
+
+      @keyframes wake-cat-launch {
+        0% {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+        52% {
+          opacity: 1;
+          transform: translateY(-7px) scale(1.08);
+        }
+        100% {
+          opacity: 0;
+          transform: translateY(-16px) scale(0.68);
+        }
+      }
+
+      @keyframes wake-cat-return {
+        0%, 54% {
+          opacity: 0;
+          transform: translateY(-10px) scale(0.68);
+        }
+        82% {
+          opacity: 1;
+          transform: translateY(2px) scale(1.08);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      @keyframes wake-content-hide {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+
+      @keyframes wake-transition-ring {
+        from {
+          opacity: 0.9;
+          transform: scale(0.65);
+        }
+        to {
+          opacity: 0;
+          transform: scale(1.75);
+        }
+      }
+
       #${PANEL_ID}[data-minimized="true"] .toolbar,
       #${PANEL_ID}[data-minimized="true"] .routes,
       #${PANEL_ID}[data-minimized="true"] .content,
@@ -774,6 +984,26 @@
         to {
           opacity: 1;
           transform: translateY(0) scale(1);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #${PANEL_ID}[data-wake-transition="opening"],
+        #${PANEL_ID}[data-wake-transition="minimizing"],
+        #${PANEL_ID}[data-wake-transition="closing"],
+        #${PANEL_ID}[data-wake-transition="waiting"] #${WAKE_ID} .wake-art,
+        #${PANEL_ID}[data-wake-transition="opening"] .toolbar,
+        #${PANEL_ID}[data-wake-transition="opening"] .content,
+        #${PANEL_ID}[data-wake-transition="opening"] .resize,
+        #${PANEL_ID}[data-wake-transition="minimizing"] .toolbar,
+        #${PANEL_ID}[data-wake-transition="minimizing"] .content,
+        #${PANEL_ID}[data-wake-transition="minimizing"] .resize,
+        #${PANEL_ID}[data-wake-transition="closing"] .toolbar,
+        #${PANEL_ID}[data-wake-transition="closing"] .content,
+        #${PANEL_ID}[data-wake-transition="closing"] .resize,
+        .wake-transition-cat,
+        .wake-transition-cat::after {
+          animation: none;
         }
       }
 
@@ -1307,17 +1537,19 @@
     }
 
     if (action === 'minimize') {
-      setMinimized(true, true);
+      minimizePanelWithTransition(true);
       return;
     }
 
     if (action === 'close') {
-      closePanel();
-      saveState({ enabled: false });
-      chrome.runtime.sendMessage({
-        type: 'NEKO_PANEL_STATE',
-        closed: true
-      }).catch(() => {});
+      dismissPanelWithTransition(() => {
+        closePanel();
+        saveState({ enabled: false });
+        chrome.runtime.sendMessage({
+          type: 'NEKO_PANEL_STATE',
+          closed: true
+        }).catch(() => {});
+      });
       return;
     }
   }
@@ -1495,7 +1727,7 @@
     frame.removeAttribute('src');
   }
 
-  function setMinimized(minimized, persist) {
+  function setMinimized(minimized, persist, transitionFrom = null) {
     if (!panel) {
       return;
     }
@@ -1521,6 +1753,12 @@
       applyPanelStyles(panel, currentPanel);
     }
 
+    if (expandingFloatingPanel && transitionFrom) {
+      animateFloatingPanelFromWake(transitionFrom);
+    } else {
+      cancelWakeTransition();
+    }
+
     if (minimized) {
       setRoutesOpen(false);
       unloadFrame();
@@ -1541,7 +1779,7 @@
     }
   }
 
-  async function wakePanel() {
+  async function wakePanel(transitionFrom = null) {
     if (isConfiguredFrontendPage(location.href, webuiUrl)) {
       closePanel();
       return;
@@ -1555,7 +1793,219 @@
       return;
     }
     setAvatarForm(response?.avatarForm, false);
-    setMinimized(false, response?.ok ? false : true);
+    // 后台无响应时沿用原有本地唤醒兜底，并把结果持久化。
+    setMinimized(false, !response?.ok, transitionFrom);
+  }
+
+  function minimizePanelWithTransition(persist) {
+    if (
+      !panel
+      || displayMode !== 'floating'
+      || panel.dataset.minimized === 'true'
+      || panel.dataset.wakeTransition
+    ) {
+      setMinimized(true, persist);
+      return;
+    }
+    const reducedMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) {
+      setMinimized(true, persist);
+      return;
+    }
+
+    cancelWakeTransition();
+    setRoutesOpen(false);
+    const sourceRect = panel.getBoundingClientRect();
+    const targetRect = {
+      // 以面板实际渲染出的右下角为锚点。window.innerWidth 可能包含滚动条槽，
+      // 若用它计算，过渡克隆移除时真实的小猫按钮会向左瞬移。
+      left: sourceRect.right - MINIMIZED_SIZE.width,
+      top: sourceRect.bottom - MINIMIZED_SIZE.height,
+      width: MINIMIZED_SIZE.width,
+      height: MINIMIZED_SIZE.height
+    };
+    if (sourceRect.width <= 0 || sourceRect.height <= 0) {
+      setMinimized(true, persist);
+      return;
+    }
+
+    setWakeTransitionGeometry(targetRect, sourceRect);
+    mountWakeTransitionCat(targetRect, 'minimizing');
+    panel.dataset.wakeTransition = 'minimizing';
+    scheduleWakeTransitionFinish(
+      'minimizing',
+      'wake-panel-minimize',
+      WAKE_TRANSITION_DURATION_MS,
+      () => setMinimized(true, persist)
+    );
+  }
+
+  function dismissPanelWithTransition(onDismiss) {
+    if (!panel || panel.dataset.minimized === 'true' || panel.dataset.wakeTransition) {
+      onDismiss();
+      return;
+    }
+    const reducedMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) {
+      onDismiss();
+      return;
+    }
+
+    cancelWakeTransition();
+    setRoutesOpen(false);
+    panel.dataset.wakeTransition = 'closing';
+    scheduleWakeTransitionFinish(
+      'closing',
+      'wake-panel-dismiss',
+      PANEL_DISMISS_DURATION_MS,
+      onDismiss
+    );
+  }
+
+  function captureWakeTransitionRect() {
+    if (!wakeButton || !panel || panel.dataset.minimized !== 'true') {
+      return null;
+    }
+    const rect = wakeButton.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    return {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
+  function beginWakeTransition() {
+    if (!panel || !wakeButton) {
+      return;
+    }
+    cancelWakeTransition();
+    panel.dataset.wakeTransition = 'waiting';
+    wakeButton.setAttribute('aria-busy', 'true');
+  }
+
+  function animateFloatingPanelFromWake(sourceRect) {
+    if (!panel || !shadow) {
+      cancelWakeTransition();
+      return;
+    }
+    const reducedMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) {
+      cancelWakeTransition();
+      return;
+    }
+
+    const targetRect = panel.getBoundingClientRect();
+    if (targetRect.width <= 0 || targetRect.height <= 0) {
+      cancelWakeTransition();
+      return;
+    }
+
+    setWakeTransitionGeometry(sourceRect, targetRect);
+    mountWakeTransitionCat(sourceRect, 'opening');
+
+    panel.dataset.wakeTransition = 'opening';
+    wakeButton?.removeAttribute('aria-busy');
+    scheduleWakeTransitionFinish(
+      'opening',
+      'wake-panel-open',
+      WAKE_TRANSITION_DURATION_MS
+    );
+  }
+
+  function setWakeTransitionGeometry(sourceRect, targetRect) {
+    if (!panel) {
+      return;
+    }
+    panel.style.setProperty('--neko-wake-translate-x', `${sourceRect.left - targetRect.left}px`);
+    panel.style.setProperty('--neko-wake-translate-y', `${sourceRect.top - targetRect.top}px`);
+    panel.style.setProperty('--neko-wake-scale-x', String(sourceRect.width / targetRect.width));
+    panel.style.setProperty('--neko-wake-scale-y', String(sourceRect.height / targetRect.height));
+  }
+
+  function mountWakeTransitionCat(rect, direction) {
+    if (!shadow) {
+      return;
+    }
+    // 调用方通常会先取消旧过渡，这里再兜底，避免遗留重复的小猫节点。
+    wakeTransitionCat?.remove();
+    wakeTransitionCat = document.createElement('div');
+    wakeTransitionCat.className = 'wake-transition-cat';
+    wakeTransitionCat.dataset.direction = direction;
+    wakeTransitionCat.style.left = `${rect.left}px`;
+    wakeTransitionCat.style.top = `${rect.top}px`;
+    wakeTransitionCat.style.width = `${rect.width}px`;
+    wakeTransitionCat.style.height = `${rect.height}px`;
+    const image = document.createElement('img');
+    image.src = WAKE_IMAGE_URL;
+    image.alt = '';
+    wakeTransitionCat.append(image);
+    shadow.append(wakeTransitionCat);
+  }
+
+  function scheduleWakeTransitionFinish(state, animationName, duration, onFinish = null) {
+    if (!panel) {
+      onFinish?.();
+      return;
+    }
+    // 防止未来新增调用点漏掉 cancelWakeTransition，导致旧监听器叠加。
+    if (wakeTransitionEndHandler) {
+      panel.removeEventListener('animationend', wakeTransitionEndHandler);
+    }
+    wakeTransitionPendingFinish = onFinish;
+    const finish = () => {
+      if (panel?.dataset.wakeTransition !== state) {
+        return;
+      }
+      // 先清空引用再执行收尾，回调即使重入 closePanel 也只会消费一次。
+      const pendingFinish = wakeTransitionPendingFinish;
+      wakeTransitionPendingFinish = null;
+      clearWakeTransitionState();
+      pendingFinish?.();
+    };
+    wakeTransitionEndHandler = (event) => {
+      if (event.target === panel && event.animationName === animationName) {
+        finish();
+      }
+    };
+    panel.addEventListener('animationend', wakeTransitionEndHandler);
+    // 某些页面可能吞掉 animationend，用超时保证状态最终一定能释放。
+    wakeTransitionTimer = window.setTimeout(finish, duration + 120);
+  }
+
+  function cancelWakeTransition() {
+    // 这里只取消视觉过程；已经承诺的最小化或关闭动作仍需完成。
+    const pendingFinish = wakeTransitionPendingFinish;
+    wakeTransitionPendingFinish = null;
+    clearWakeTransitionState();
+    pendingFinish?.();
+  }
+
+  function clearWakeTransitionState() {
+    if (wakeTransitionTimer) {
+      window.clearTimeout(wakeTransitionTimer);
+      wakeTransitionTimer = 0;
+    }
+    if (wakeTransitionEndHandler && panel) {
+      panel.removeEventListener('animationend', wakeTransitionEndHandler);
+    }
+    wakeTransitionEndHandler = null;
+    wakeTransitionCat?.remove();
+    wakeTransitionCat = null;
+    if (panel) {
+      delete panel.dataset.wakeTransition;
+      panel.style.removeProperty('--neko-wake-translate-x');
+      panel.style.removeProperty('--neko-wake-translate-y');
+      panel.style.removeProperty('--neko-wake-scale-x');
+      panel.style.removeProperty('--neko-wake-scale-y');
+    }
+    wakeButton?.removeAttribute('aria-busy');
   }
 
   function bindToolbarDrag(handle) {
@@ -1786,12 +2236,18 @@
       displayMode !== 'fullscreen'
       && panel?.dataset.minimized === 'true'
     ) {
-      wakePanel();
+      const transitionFrom = captureWakeTransitionRect();
+      beginWakeTransition();
+      wakePanel(transitionFrom).catch(() => {
+        // 异常时必须释放 waiting 和 aria-busy，否则小猫入口会永久不可点击。
+        cancelWakeTransition();
+      });
     }
   }
 
   function closePanel() {
     healthCheckSequence += 1;
+    cancelWakeTransition();
     resetEmbedPassthrough('panel-close');
     unloadFrame();
     stopAllPcmRelays();
