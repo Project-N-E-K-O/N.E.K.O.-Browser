@@ -92,6 +92,8 @@
   let wakeTransitionTimer = 0;
   let wakeTransitionEndHandler = null;
   let wakeTransitionCat = null;
+  // 视觉动画可以被打断，但最小化、关闭等业务收尾不能因此丢失。
+  let wakeTransitionPendingFinish = null;
 
   const activePcmRelays = new Set();
   let pcmWebuiPort = null;
@@ -1791,11 +1793,8 @@
       return;
     }
     setAvatarForm(response?.avatarForm, false);
-    if (transitionFrom) {
-      setMinimized(false, response?.ok ? false : true, transitionFrom);
-    } else {
-      setMinimized(false, response?.ok ? false : true);
-    }
+    // 后台无响应时沿用原有本地唤醒兜底，并把结果持久化。
+    setMinimized(false, !response?.ok, transitionFrom);
   }
 
   function minimizePanelWithTransition(persist) {
@@ -1819,9 +1818,8 @@
     setRoutesOpen(false);
     const sourceRect = panel.getBoundingClientRect();
     const targetRect = {
-      // Keep the exact rendered right/bottom anchor. Deriving this from
-      // window.innerWidth can include the scrollbar gutter and make the real
-      // minimized button jump left when the transition clone is removed.
+      // 以面板实际渲染出的右下角为锚点。window.innerWidth 可能包含滚动条槽，
+      // 若用它计算，过渡克隆移除时真实的小猫按钮会向左瞬移。
       left: sourceRect.right - MINIMIZED_SIZE.width,
       top: sourceRect.bottom - MINIMIZED_SIZE.height,
       width: MINIMIZED_SIZE.width,
@@ -1935,6 +1933,8 @@
     if (!shadow) {
       return;
     }
+    // 调用方通常会先取消旧过渡，这里再兜底，避免遗留重复的小猫节点。
+    wakeTransitionCat?.remove();
     wakeTransitionCat = document.createElement('div');
     wakeTransitionCat.className = 'wake-transition-cat';
     wakeTransitionCat.dataset.direction = direction;
@@ -1954,12 +1954,20 @@
       onFinish?.();
       return;
     }
+    // 防止未来新增调用点漏掉 cancelWakeTransition，导致旧监听器叠加。
+    if (wakeTransitionEndHandler) {
+      panel.removeEventListener('animationend', wakeTransitionEndHandler);
+    }
+    wakeTransitionPendingFinish = onFinish;
     const finish = () => {
       if (panel?.dataset.wakeTransition !== state) {
         return;
       }
+      // 先清空引用再执行收尾，回调即使重入 closePanel 也只会消费一次。
+      const pendingFinish = wakeTransitionPendingFinish;
+      wakeTransitionPendingFinish = null;
       clearWakeTransitionState();
-      onFinish?.();
+      pendingFinish?.();
     };
     wakeTransitionEndHandler = (event) => {
       if (event.target === panel && event.animationName === animationName) {
@@ -1967,11 +1975,16 @@
       }
     };
     panel.addEventListener('animationend', wakeTransitionEndHandler);
+    // 某些页面可能吞掉 animationend，用超时保证状态最终一定能释放。
     wakeTransitionTimer = window.setTimeout(finish, duration + 120);
   }
 
   function cancelWakeTransition() {
+    // 这里只取消视觉过程；已经承诺的最小化或关闭动作仍需完成。
+    const pendingFinish = wakeTransitionPendingFinish;
+    wakeTransitionPendingFinish = null;
     clearWakeTransitionState();
+    pendingFinish?.();
   }
 
   function clearWakeTransitionState() {
@@ -2225,7 +2238,10 @@
     ) {
       const transitionFrom = captureWakeTransitionRect();
       beginWakeTransition();
-      wakePanel(transitionFrom);
+      wakePanel(transitionFrom).catch(() => {
+        // 异常时必须释放 waiting 和 aria-busy，否则小猫入口会永久不可点击。
+        cancelWakeTransition();
+      });
     }
   }
 

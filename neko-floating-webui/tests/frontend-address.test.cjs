@@ -208,7 +208,7 @@ test('wake control keeps its timeout fallback when the background does not respo
 
   await wakePanel();
 
-  assert.deepEqual(minimizedCalls, [[false, true]]);
+  assert.deepEqual(minimizedCalls, [[false, true, null]]);
 });
 
 test('floating and side panel surfaces reload when the address changes', () => {

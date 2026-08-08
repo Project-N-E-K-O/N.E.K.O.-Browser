@@ -332,7 +332,11 @@ test('the collapsed cat uses a normal click event while dragging suppresses acci
   assert.match(clickBlock, /panel\?\.dataset\.minimized === 'true'/);
   assert.match(clickBlock, /captureWakeTransitionRect\(\)/);
   assert.match(clickBlock, /beginWakeTransition\(\)/);
-  assert.match(clickBlock, /wakePanel\(transitionFrom\)/);
+  assert.match(
+    clickBlock,
+    /wakePanel\(transitionFrom\)\.catch\(\(\) => \{[\s\S]*?cancelWakeTransition\(\)/,
+    'a failed wake must clear the waiting transition state'
+  );
   const endDragBlock = functionBlock('endWakeDrag', 'handleWakeClick');
   assert.match(endDragBlock, /suppressWakeClick = true/);
   assert.doesNotMatch(endDragBlock, /wakePanel\(\)/);
@@ -342,7 +346,7 @@ test('clicking the collapsed cat expands the floating panel from the cat positio
   const minimizeBlock = functionBlock('setMinimized', 'wakePanel');
   assert.match(minimizeBlock, /animateFloatingPanelFromWake\(transitionFrom\)/);
 
-  const animationBlock = functionBlock('animateFloatingPanelFromWake', 'cancelWakeTransition');
+  const animationBlock = functionBlock('animateFloatingPanelFromWake', 'setWakeTransitionGeometry');
   assert.match(animationBlock, /prefers-reduced-motion: reduce/);
   assert.match(animationBlock, /setWakeTransitionGeometry\(sourceRect, targetRect\)/);
   assert.match(animationBlock, /mountWakeTransitionCat\(sourceRect, 'opening'\)/);
@@ -355,6 +359,33 @@ test('clicking the collapsed cat expands the floating panel from the cat positio
   assert.match(source, /@keyframes wake-cat-launch/);
   assert.match(source, /@keyframes wake-content-reveal/);
   assert.match(source, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
+test('wake transition cleanup preserves completion callbacks and replaces stale resources', () => {
+  assert.match(source, /let wakeTransitionPendingFinish = null/);
+
+  const mountBlock = functionBlock('mountWakeTransitionCat', 'scheduleWakeTransitionFinish');
+  assert.ok(
+    mountBlock.indexOf('wakeTransitionCat?.remove()')
+      < mountBlock.indexOf("wakeTransitionCat = document.createElement('div')"),
+    'an old transition cat must be removed before mounting its replacement'
+  );
+
+  const scheduleBlock = functionBlock('scheduleWakeTransitionFinish', 'cancelWakeTransition');
+  assert.match(scheduleBlock, /panel\.removeEventListener\('animationend', wakeTransitionEndHandler\)/);
+  assert.match(scheduleBlock, /wakeTransitionPendingFinish = onFinish/);
+  assert.match(
+    scheduleBlock,
+    /const pendingFinish = wakeTransitionPendingFinish;\s*wakeTransitionPendingFinish = null;\s*clearWakeTransitionState\(\);\s*pendingFinish\?\.\(\)/,
+    'normal completion must consume its callback exactly once'
+  );
+
+  const cancelBlock = functionBlock('cancelWakeTransition', 'clearWakeTransitionState');
+  assert.match(
+    cancelBlock,
+    /const pendingFinish = wakeTransitionPendingFinish;\s*wakeTransitionPendingFinish = null;\s*clearWakeTransitionState\(\);\s*pendingFinish\?\.\(\)/,
+    'cancellation must still consume its pending callback exactly once'
+  );
 });
 
 test('floating panel minimize and close actions have distinct exit animations', () => {
