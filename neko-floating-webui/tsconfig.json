@@ -7,6 +7,11 @@
     "types": ["chrome"],
     "baseUrl": ".",
     "paths": {
+      "@/content/ControlOverlay": ["./src/browser-skill/ui/ControlOverlay.tsx"],
+      "@/content/HelpRequestOverlay": ["./src/browser-skill/ui/HelpRequestOverlay.tsx"],
+      "@browser-skill-upstream/content/HelpRequestOverlay": [
+        "./vendor/browser-skill/apps/extension/src/content/HelpRequestOverlay.tsx"
+      ],
       "@/lib/popup-bridge": ["./src/browser-skill/popup-bridge.ts"],
       "@/*": ["./vendor/browser-skill/apps/extension/src/*"],
       "@browser-skill/i18n": ["./vendor/browser-skill/packages/i18n/src/index.ts"],
@@ -17,6 +22,7 @@
   "include": [
     "./*.js",
     "./src/**/*.ts",
+    "./src/**/*.tsx",
     "./src/**/*.d.ts",
     "./tests/**/*.ts",
     "./wxt.config.ts",

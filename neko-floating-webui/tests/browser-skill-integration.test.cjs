@@ -7,6 +7,7 @@ const { extractFunction } = require('./helpers/extract-function.cjs');
 const projectRoot = path.resolve(__dirname, '..');
 const read = (name) => fs.readFileSync(path.join(projectRoot, name), 'utf8');
 const manifest = JSON.parse(read('src/manifest-base.json'));
+const background = read('background.js');
 const content = read('content.js');
 const popupHtml = read('popup.html');
 const popup = read('popup.js');
@@ -15,6 +16,11 @@ const wxtConfig = read('wxt.config.ts');
 const vitestConfig = read('vitest.config.ts');
 const packageJson = JSON.parse(read('package.json'));
 const ensureBrowserSkill = read('scripts/ensure-browser-skill.cjs');
+const browserSkillContent = read('vendor/browser-skill/apps/extension/src/entrypoints/content.ts');
+const controlOverlay = read('src/browser-skill/ui/ControlOverlay.tsx');
+const helpRequestOverlay = read('src/browser-skill/ui/HelpRequestOverlay.tsx');
+const browserControlIcon = read('src/browser-skill/ui/BrowserControlIcon.tsx');
+const profileName = read('src/browser-skill/ui/profile-name.ts');
 
 test('BrowserSkill permissions, daemon CSP, and native N.E.K.O surfaces share one manifest base', () => {
   for (const permission of ['debugger', 'idle', 'notifications', 'tabs', 'webNavigation', 'windows']) {
@@ -161,6 +167,57 @@ test('native popup uses the bsk-popup runtime port and exposes connection and re
   assert.match(popupHtml, /class="bsk-status-line" aria-live="polite"/);
   assert.match(popupCss, /\.bsk-status-badge\s*\{[\s\S]*?font-size:\s*10px/);
   assert.match(popupCss, /\.bsk-mini-button\s*\{[\s\S]*?font-size:\s*10px/);
+});
+
+test('N.E.K.O owns the BrowserSkill control pill without modifying the pinned submodule', () => {
+  assert.match(
+    wxtConfig,
+    /"@\/content\/ControlOverlay": resolve\(here, "src\/browser-skill\/ui\/ControlOverlay\.tsx"\)/,
+  );
+  assert.match(browserSkillContent, /from "@\/content\/ControlOverlay"/);
+  assert.match(controlOverlay, /BrowserControlIcon/);
+  assert.match(browserControlIcon, /Browser window \+ pointer/);
+  assert.match(browserControlIcon, /transform="translate\(0 1\)"/);
+  assert.match(controlOverlay, /#40c5f1/i);
+  assert.match(controlOverlay, /#e45f70/i);
+  assert.match(controlOverlay, /prefers-color-scheme: dark/);
+  assert.match(profileName, /NEKO_GET_CURRENT_CATGIRL/);
+  assert.match(controlOverlay, /formatControlStatus\(t\("controlOverlay\.status"\), profileName\)/);
+  assert.match(background, /new URL\('\/api\/characters\/current_catgirl', webuiUrl\)/);
+  assert.match(background, /payload\?\.current_catgirl/);
+  assert.doesNotMatch(controlOverlay, /Agent_on\.png|assets\/logo\.png|#f97316|rgba\(249,\s*115,\s*22/);
+});
+
+test('N.E.K.O owns the BrowserSkill help card and removes upstream Agent branding', () => {
+  assert.match(
+    wxtConfig,
+    /"@\/content\/HelpRequestOverlay": resolve\([\s\S]*?"src\/browser-skill\/ui\/HelpRequestOverlay\.tsx"/,
+  );
+  assert.match(browserSkillContent, /from "@\/content\/HelpRequestOverlay"/);
+  assert.match(helpRequestOverlay, /@browser-skill-upstream\/content\/HelpRequestOverlay/);
+  assert.match(helpRequestOverlay, /replaceAgentTerms\(request\.prompt, profileName\)/);
+  assert.match(helpRequestOverlay, /getResourceBundle\(locale, "extension"\)/);
+  assert.match(helpRequestOverlay, /addResourceBundle\(locale, "extension", baseBundle, true, true\)/);
+  assert.match(helpRequestOverlay, /continue: "完成并交还控制权"/);
+  assert.match(helpRequestOverlay, /cancel: "取消请求"/);
+  assert.match(helpRequestOverlay, /helpRequest\.\$\{key\}/);
+  assert.match(helpRequestOverlay, /transform='translate\(0 1\)'/);
+  assert.match(helpRequestOverlay, /#40c5f1/i);
+  assert.match(helpRequestOverlay, /#18a7ff/i);
+  assert.match(helpRequestOverlay, /prefers-color-scheme: dark/);
+  assert.match(helpRequestOverlay, /help-highlight/);
+  assert.doesNotMatch(helpRequestOverlay, /assets\/logo\.png|Agent_on\.png|#f97316/);
+  assert.doesNotMatch(controlOverlay, /linear-gradient\(145deg, #fff, #e9f9ff\)/);
+});
+
+test('current catgirl profile names are normalized before leaving the background', () => {
+  const normalizeCatgirlProfileName = Function(
+    `${extractFunction(background, 'normalizeCatgirlProfileName')}; return normalizeCatgirlProfileName;`
+  )();
+
+  assert.equal(normalizeCatgirlProfileName('  猫娘\n档案  '), '猫娘 档案');
+  assert.equal(normalizeCatgirlProfileName(null), '');
+  assert.equal(normalizeCatgirlProfileName('喵'.repeat(140)), '喵'.repeat(128));
 });
 
 test('popup metadata and copy feedback use generated versions and one restore timer', () => {

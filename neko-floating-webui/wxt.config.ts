@@ -102,6 +102,15 @@ export default defineConfig({
   outDir: "dist",
   modules: ["@wxt-dev/module-react"],
   alias: {
+    "@/content/ControlOverlay": resolve(here, "src/browser-skill/ui/ControlOverlay.tsx"),
+    "@/content/HelpRequestOverlay": resolve(
+      here,
+      "src/browser-skill/ui/HelpRequestOverlay.tsx",
+    ),
+    "@browser-skill-upstream/content/HelpRequestOverlay": resolve(
+      browserSkillExtension,
+      "src/content/HelpRequestOverlay.tsx",
+    ),
     "@/lib/popup-bridge": resolve(here, "src/browser-skill/popup-bridge.ts"),
     "@browser-skill/i18n/react": resolve(browserSkillRoot, "packages/i18n/src/react.tsx"),
     "@browser-skill/i18n": resolve(browserSkillRoot, "packages/i18n/src/index.ts"),
