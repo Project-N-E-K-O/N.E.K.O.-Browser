@@ -208,6 +208,24 @@ const HELP_REQUEST_STYLES = `
       animation: none !important;
       box-shadow: 0 0 0 2px rgba(64, 197, 241, 0.8) !important;
     }
+
+    .bsk-help-banner,
+    .bsk-help-drag-pill,
+    .bsk-help-collapse-toggle,
+    .bsk-help-collapse-icon,
+    .bsk-help-body-content,
+    .bsk-help-note-input,
+    .bsk-help-btn-cancel,
+    .bsk-help-btn-continue {
+      transition: none !important;
+    }
+
+    .bsk-help-btn-cancel:hover,
+    .bsk-help-btn-continue:hover,
+    .bsk-help-btn-cancel:active,
+    .bsk-help-btn-continue:active {
+      transform: none !important;
+    }
   }
 `;
 

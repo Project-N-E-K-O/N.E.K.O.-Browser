@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { formatControlStatus } from "../../src/browser-skill/ui/ControlOverlay";
+import {
+  formatControlStatus,
+  getControlOverlayPointerEvents,
+} from "../../src/browser-skill/ui/ControlOverlay";
 import { createScopedHelpI18n } from "../../src/browser-skill/ui/HelpRequestOverlay";
 import { replaceAgentTerms } from "../../src/browser-skill/ui/profile-name";
 
@@ -9,9 +12,32 @@ describe("N.E.K.O BrowserSkill control status", () => {
     expect(formatControlStatus("Agent controlling", "Nana")).toBe("Nana controlling");
   });
 
+  it("recognizes every supported Agent status prefix", () => {
+    expect(formatControlStatus("Browser Agent 当前没有执行任务", "小夜")).toBe(
+      "小夜当前没有执行任务",
+    );
+    expect(formatControlStatus("AI Agent：正在控制", "小夜")).toBe("小夜：正在控制");
+    expect(formatControlStatus("Agent正在控制", "小夜")).toBe("小夜正在控制");
+    expect(formatControlStatus("BrowserAgent 当前没有执行任务", "小夜")).toBe(
+      "小夜当前没有执行任务",
+    );
+  });
+
   it("never falls back to Agent while the profile name is unavailable", () => {
     expect(formatControlStatus("Agent 正在控制", "")).toBe("正在控制");
     expect(formatControlStatus("Agent controlling", "")).toBe("controlling");
+    expect(formatControlStatus("Agent：正在控制", "")).toBe("正在控制");
+    expect(formatControlStatus("Browser Agent当前没有执行任务", "")).toBe("当前没有执行任务");
+  });
+
+  it("treats replacement-string metacharacters in profile names literally", () => {
+    expect(replaceAgentTerms("Agent 正在控制", "$&/喵")).toBe("$&/喵正在控制");
+    expect(formatControlStatus("AI Agent 正在控制", "$&/喵")).toBe("$&/喵正在控制");
+  });
+
+  it("lets automation bypass the pill while keeping normal mode interactive", () => {
+    expect(getControlOverlayPointerEvents(true)).toBe("none");
+    expect(getControlOverlayPointerEvents(false)).toBe("auto");
   });
 
   it("uses the catgirl profile name throughout help request copy", () => {

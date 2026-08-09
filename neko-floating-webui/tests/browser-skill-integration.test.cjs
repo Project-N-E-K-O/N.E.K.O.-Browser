@@ -183,6 +183,12 @@ test('N.E.K.O owns the BrowserSkill control pill without modifying the pinned su
   assert.match(controlOverlay, /prefers-color-scheme: dark/);
   assert.match(profileName, /NEKO_GET_CURRENT_CATGIRL/);
   assert.match(controlOverlay, /formatControlStatus\(t\("controlOverlay\.status"\), profileName\)/);
+  assert.match(controlOverlay, /getControlOverlayPointerEvents\(automationBypass\)/);
+  assert.equal((controlOverlay.match(/style=\{\{ pointerEvents \}\}/g) || []).length, 2);
+  assert.match(
+    controlOverlay,
+    /data-slot="control-overlay-stop-all"[\s\S]*?style=\{\{ pointerEvents: "auto" \}\}/,
+  );
   assert.match(background, /new URL\('\/api\/characters\/current_catgirl', webuiUrl\)/);
   assert.match(background, /payload\?\.current_catgirl/);
   assert.doesNotMatch(controlOverlay, /Agent_on\.png|assets\/logo\.png|#f97316|rgba\(249,\s*115,\s*22/);
@@ -206,6 +212,14 @@ test('N.E.K.O owns the BrowserSkill help card and removes upstream Agent brandin
   assert.match(helpRequestOverlay, /#18a7ff/i);
   assert.match(helpRequestOverlay, /prefers-color-scheme: dark/);
   assert.match(helpRequestOverlay, /help-highlight/);
+  assert.match(
+    helpRequestOverlay,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.bsk-help-banner,[\s\S]*?transition: none !important/,
+  );
+  assert.match(
+    helpRequestOverlay,
+    /\.bsk-help-btn-cancel:hover,[\s\S]*?\.bsk-help-btn-continue:active[\s\S]*?transform: none !important/,
+  );
   assert.doesNotMatch(helpRequestOverlay, /assets\/logo\.png|Agent_on\.png|#f97316/);
   assert.doesNotMatch(controlOverlay, /linear-gradient\(145deg, #fff, #e9f9ff\)/);
 });

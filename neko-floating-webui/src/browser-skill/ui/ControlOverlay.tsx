@@ -2,7 +2,12 @@ import { useTranslation } from "@browser-skill/i18n/react";
 import { RiStopCircleLine } from "@remixicon/react";
 import { useEffect, useRef, useState } from "react";
 import { BrowserControlIcon } from "./BrowserControlIcon";
-import { replaceAgentTerms, useCurrentCatgirlProfileName } from "./profile-name";
+import {
+  hasAgentStatusPrefix,
+  replaceAgentTerms,
+  stripAgentStatusPrefix,
+  useCurrentCatgirlProfileName,
+} from "./profile-name";
 
 export interface ControlOverlayProps {
   visible: boolean;
@@ -13,14 +18,18 @@ export interface ControlOverlayProps {
 
 export function formatControlStatus(localizedStatus: string, profileName: string): string {
   const normalizedName = profileName.trim();
-  const statusWithoutAgent = localizedStatus.replace(/^Agent(?=\s|$)\s*/i, "").trim();
+  const statusWithoutAgent = stripAgentStatusPrefix(localizedStatus);
   if (!normalizedName) {
     return statusWithoutAgent;
   }
-  if (/^Agent(?=\s|$)/i.test(localizedStatus)) {
+  if (hasAgentStatusPrefix(localizedStatus)) {
     return replaceAgentTerms(localizedStatus, normalizedName).trim();
   }
   return `${normalizedName} ${statusWithoutAgent}`.trim();
+}
+
+export function getControlOverlayPointerEvents(automationBypass: boolean): "none" | "auto" {
+  return automationBypass ? "none" : "auto";
 }
 
 const CONTROL_OVERLAY_STYLES = `
@@ -273,7 +282,7 @@ export function ControlOverlay({
 
   if (!visible) return null;
 
-  const pointerEvents = automationBypass ? "none" : "auto";
+  const pointerEvents = getControlOverlayPointerEvents(automationBypass);
   const statusText = formatControlStatus(t("controlOverlay.status"), profileName);
 
   return (
@@ -308,7 +317,7 @@ export function ControlOverlay({
         className="neko-control-pill"
         data-slot="control-overlay-pill"
         data-visible={show ? "true" : "false"}
-        style={{ pointerEvents: "auto" }}
+        style={{ pointerEvents }}
       >
         <div className="neko-control-brand">
           <span className="neko-control-icon-shell">
