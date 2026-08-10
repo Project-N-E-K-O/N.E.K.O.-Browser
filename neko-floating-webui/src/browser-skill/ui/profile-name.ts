@@ -37,9 +37,16 @@ export function useCurrentCatgirlProfileName(active: boolean): string {
 
 const AGENT_TERM_SOURCE = String.raw`(?:Browser\s*Agent|AI\s*Agent|Agent)`;
 const AGENT_TERM_PATTERN = new RegExp(String.raw`\b${AGENT_TERM_SOURCE}\b`, "gi");
+const EAST_ASIAN_CHAR_SOURCE = String.raw`\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}`;
+const AGENT_SEPARATOR_SOURCE = String.raw`\s:：，。！？、\u002d\u2013\u2014`;
+const EAST_ASIAN_CHAR_PATTERN = new RegExp(`[${EAST_ASIAN_CHAR_SOURCE}]`, "u");
 const AGENT_STATUS_PREFIX_PATTERN = new RegExp(
-  String.raw`^${AGENT_TERM_SOURCE}(?=$|\s|[:：，。！？、]|[\u3400-\u9fff])`,
-  "i",
+  String.raw`^${AGENT_TERM_SOURCE}(?=$|[${AGENT_SEPARATOR_SOURCE}]|[${EAST_ASIAN_CHAR_SOURCE}])`,
+  "iu",
+);
+const LEADING_AGENT_SEPARATOR_PATTERN = new RegExp(
+  String.raw`^[${AGENT_SEPARATOR_SOURCE}]+`,
+  "u",
 );
 
 export function hasAgentStatusPrefix(value: string): boolean {
@@ -49,24 +56,24 @@ export function hasAgentStatusPrefix(value: string): boolean {
 export function stripAgentStatusPrefix(value: string): string {
   return value
     .replace(AGENT_STATUS_PREFIX_PATTERN, "")
-    .replace(/^[\s:：，。！？、—–-]+/u, "")
+    .replace(LEADING_AGENT_SEPARATOR_PATTERN, "")
     .trim();
 }
 
 export function replaceAgentTerms(value: string, profileName: string): string {
   const replacement = profileName.trim() || "N.E.K.O";
   const replaced = value.replace(AGENT_TERM_PATTERN, () => replacement);
-  if (!/[\u3400-\u9fff]/u.test(replaced)) {
+  if (!EAST_ASIAN_CHAR_PATTERN.test(replaced)) {
     return replaced;
   }
 
   const escapedReplacement = replacement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const withoutLeadingCjkSpace = replaced.replace(
-    new RegExp(`([\\u3400-\\u9fff])\\s+(${escapedReplacement})`, "gu"),
+  const withoutLeadingEastAsianSpace = replaced.replace(
+    new RegExp(`([${EAST_ASIAN_CHAR_SOURCE}])\\s+(${escapedReplacement})`, "gu"),
     "$1$2",
   );
-  return withoutLeadingCjkSpace.replace(
-    new RegExp(`(${escapedReplacement})\\s+(?=[\\u3400-\\u9fff])`, "gu"),
+  return withoutLeadingEastAsianSpace.replace(
+    new RegExp(`(${escapedReplacement})\\s+(?=[${EAST_ASIAN_CHAR_SOURCE}])`, "gu"),
     "$1",
   );
 }

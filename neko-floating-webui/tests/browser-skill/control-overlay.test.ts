@@ -23,6 +23,21 @@ describe("N.E.K.O BrowserSkill control status", () => {
     );
   });
 
+  it("recognizes Japanese and Korean Agent status prefixes", () => {
+    expect(formatControlStatus("Agentが操作中", "小夜")).toBe("小夜が操作中");
+    expect(formatControlStatus("Agent カタカナで操作中", "小夜")).toBe(
+      "小夜カタカナで操作中",
+    );
+    expect(formatControlStatus("Agent 가 제어 중", "小夜")).toBe("小夜가 제어 중");
+  });
+
+  it("recognizes hyphen and dash Agent status separators", () => {
+    expect(formatControlStatus("Agent-正在控制", "小夜")).toBe("小夜-正在控制");
+    expect(formatControlStatus("Agent–正在控制", "小夜")).toBe("小夜–正在控制");
+    expect(formatControlStatus("Agent—正在控制", "小夜")).toBe("小夜—正在控制");
+    expect(formatControlStatus("Agent—正在控制", "")).toBe("正在控制");
+  });
+
   it("never falls back to Agent while the profile name is unavailable", () => {
     expect(formatControlStatus("Agent 正在控制", "")).toBe("正在控制");
     expect(formatControlStatus("Agent controlling", "")).toBe("controlling");
