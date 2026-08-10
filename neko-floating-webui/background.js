@@ -39,6 +39,7 @@ const OFFSCREEN_PING_TIMEOUT_MS = 1000;
 const OFFSCREEN_MESSAGE_TIMEOUT_MS = 3000;
 const OFFSCREEN_READY_ATTEMPTS = 8;
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+const CURRENT_CATGIRL_REQUEST_TIMEOUT_MS = 3000;
 const PANEL_HANDOFF_UNLOAD_DELAY_MS = 1200;
 const PANEL_SWEEP_ALARM = 'neko-floating-ws-singleton-sweep';
 const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
@@ -249,6 +250,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'NEKO_GET_STATE') {
     getStoredState().then(sendResponse);
+    return true;
+  }
+
+  if (message.type === 'NEKO_GET_CURRENT_CATGIRL') {
+    fetchCurrentCatgirlProfileName()
+      .then((profileName) => sendResponse({ ok: Boolean(profileName), profileName }))
+      .catch(() => sendResponse({ ok: false, profileName: '' }));
     return true;
   }
 
@@ -1129,6 +1137,42 @@ async function getStoredState() {
       ...(stored.panel || {})
     }
   };
+}
+
+async function fetchCurrentCatgirlProfileName() {
+  const state = await getStoredState();
+  const webuiUrl = normalizeNekoUrl(state.webuiUrl) || DEFAULT_STATE.webuiUrl;
+  const endpoint = new URL('/api/characters/current_catgirl', webuiUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CURRENT_CATGIRL_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      credentials: 'omit',
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      return '';
+    }
+    const payload = await response.json();
+    return normalizeCatgirlProfileName(payload?.current_catgirl);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeCatgirlProfileName(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 128);
 }
 
 function getFrameBridgeToken() {

@@ -10,6 +10,15 @@ const browserSkillPackage = JSON.parse(
 export default defineConfig({
   resolve: {
     alias: {
+      "@/content/ControlOverlay": resolve(here, "src/browser-skill/ui/ControlOverlay.tsx"),
+      "@/content/HelpRequestOverlay": resolve(
+        here,
+        "src/browser-skill/ui/HelpRequestOverlay.tsx",
+      ),
+      "@browser-skill-upstream/content/HelpRequestOverlay": resolve(
+        here,
+        "vendor/browser-skill/apps/extension/src/content/HelpRequestOverlay.tsx",
+      ),
       "@/lib/popup-bridge": resolve(here, "src/browser-skill/popup-bridge.ts"),
       "@": resolve(here, "vendor/browser-skill/apps/extension/src"),
       "@browser-skill/i18n/react": resolve(
