@@ -177,10 +177,10 @@ pnpm build
 BrowserSkill 以 Git 子模块固定在提交：
 
 ```text
-93df62a3569203bb8a1880bb3d42e7a8b0914abe
+95040729148441d9e79b3fb644316d1266718481
 ```
 
-集成的上游扩展源码版本为 `0.1.5`，协议版本为 `1.0`。本仓库不直接修改子模块源码：
+集成的上游扩展源码版本为 `0.1.6`，协议版本为 `1.0`。本仓库不直接修改子模块源码：
 
 - N.E.K.O 兼容逻辑放在 `neko-floating-webui/src/browser-skill`。
 - BrowserSkill 自身缺陷由上游修复。
