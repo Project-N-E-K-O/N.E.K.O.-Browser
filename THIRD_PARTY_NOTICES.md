@@ -2,7 +2,7 @@
 
 ## BrowserSkill
 
-This project incorporates source code from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill), pinned as a Git submodule at commit `93df62a3569203bb8a1880bb3d42e7a8b0914abe`.
+This project incorporates source code from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill), pinned as a Git submodule at commit `95040729148441d9e79b3fb644316d1266718481`.
 
 MIT License
 

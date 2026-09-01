@@ -57,6 +57,7 @@ function createHarness() {
      const enforceSingleActivePanel = async (tabId) => cleanupCalls.push(tabId);
      const deactivateAllTabPanels = async () => {};
      const stopPcmRoutesForTab = async () => {};
+     const sendTabMessage = async (tabId, message) => chrome.tabs.sendMessage(tabId, message);
      const normalizeAvatarForm = (value) => value === 'cat' ? 'cat' : 'model';
      ${extractFunction(background, 'applyPanelStateMessage')}
      ${extractFunction(background, 'queuePanelTransition')}
