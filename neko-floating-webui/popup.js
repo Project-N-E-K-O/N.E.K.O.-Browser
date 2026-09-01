@@ -1,6 +1,9 @@
 (() => {
   const DEFAULT_WEBUI_URL = 'http://localhost:48911/';
   const BSK_PROTOCOL_VERSION = '__NEKO_BSK_PROTOCOL_VERSION__';
+  const DISPLAY_MODE_REQUEST_TIMEOUT_MS = 15000;
+  const POPUP_STATE_REQUEST_TIMEOUT_MS = 3000;
+  const SIDE_PANEL_OPEN_TIMEOUT_MS = 3000;
   const modesEl = document.querySelector('.modes');
   /** @type {NodeListOf<HTMLButtonElement>} */
   const modeButtons = document.querySelectorAll('.modes button');
@@ -71,8 +74,16 @@
   async function refresh() {
     try {
       const [state, currentWindow] = await Promise.all([
-        chrome.runtime.sendMessage({ type: 'NEKO_GET_STATE' }),
-        chrome.windows.getCurrent()
+        withTimeout(
+          chrome.runtime.sendMessage({ type: 'NEKO_GET_STATE' }),
+          POPUP_STATE_REQUEST_TIMEOUT_MS,
+          '读取面板状态'
+        ),
+        withTimeout(
+          chrome.windows.getCurrent(),
+          POPUP_STATE_REQUEST_TIMEOUT_MS,
+          '读取当前窗口'
+        )
       ]);
       currentMode = normalizeDisplayMode(state?.displayMode);
       currentComponents = normalizeSurfaceComponents(state?.surfaceComponents);
@@ -140,18 +151,32 @@
       });
       try {
         if (mode === 'sidebar') {
-          const openPromise = chrome.sidePanel.open({ windowId: currentWindowId });
-          const modePromise = chrome.runtime.sendMessage({ type: 'NEKO_SET_DISPLAY_MODE', mode });
+          const openPromise = withTimeout(
+            chrome.sidePanel.open({ windowId: currentWindowId }),
+            SIDE_PANEL_OPEN_TIMEOUT_MS,
+            '打开侧栏'
+          );
+          const modePromise = withTimeout(
+            chrome.runtime.sendMessage({ type: 'NEKO_SET_DISPLAY_MODE', mode }),
+            DISPLAY_MODE_REQUEST_TIMEOUT_MS,
+            '切换显示模式'
+          );
           const [, response] = await Promise.all([openPromise, modePromise]);
           assertOk(response);
         } else {
-          const response = await chrome.runtime.sendMessage({ type: 'NEKO_SET_DISPLAY_MODE', mode });
+          const response = await withTimeout(
+            chrome.runtime.sendMessage({ type: 'NEKO_SET_DISPLAY_MODE', mode }),
+            DISPLAY_MODE_REQUEST_TIMEOUT_MS,
+            '切换显示模式'
+          );
           assertOk(response);
         }
         currentMode = mode;
         activeSidePanelWindowId = mode === 'sidebar' ? currentWindowId : null;
         render();
       } catch (error) {
+        // 后台请求超时后重新读取持久化状态，避免菜单停留在半切换的乐观状态。
+        await refresh();
         showError(error);
       } finally {
         modeButtons.forEach((button) => {
@@ -449,6 +474,20 @@
     if (disabled) {
       setChatModeDropdownOpen(false);
     }
+  }
+
+  function withTimeout(promise, timeoutMs, label) {
+    let timer = 0;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => {
+        reject(new Error(`${label}超时，请重试。`));
+      }, timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    });
   }
 
   function setChatModeDropdownOpen(open) {

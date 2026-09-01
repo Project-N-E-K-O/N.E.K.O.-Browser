@@ -41,6 +41,9 @@ const OFFSCREEN_READY_ATTEMPTS = 8;
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const CURRENT_CATGIRL_REQUEST_TIMEOUT_MS = 3000;
 const PANEL_HANDOFF_UNLOAD_DELAY_MS = 1200;
+const PANEL_TAB_MESSAGE_TIMEOUT_MS = 2000;
+const PANEL_SCRIPT_INJECTION_TIMEOUT_MS = 3000;
+const SIDE_PANEL_CLOSE_TIMEOUT_MS = 2000;
 const PANEL_SWEEP_ALARM = 'neko-floating-ws-singleton-sweep';
 const PANEL_SWEEP_INTERVAL_MINUTES = 0.5;
 const FRAME_BRIDGE_TOKEN_KEY = 'floatingFrameBridgeToken';
@@ -532,7 +535,8 @@ async function applyPanelStateMessage(message, tabId) {
     await enforceSingleActivePanel(payload.activeTabId);
   }
 
-  await chrome.tabs.sendMessage(tabId, message).catch(() => {});
+  // 状态回传也位于面板串行队列中，必须使用有界发送，避免阻塞后续模式切换。
+  await sendTabMessage(tabId, message);
   return { ok: true };
 }
 
@@ -622,7 +626,7 @@ async function setDisplayMode(mode) {
   });
 
   if (previousSidePanelWindowId !== null) {
-    await chrome.sidePanel.close({ windowId: previousSidePanelWindowId });
+    await closeSidePanelWindow(previousSidePanelWindowId);
   }
 
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
@@ -713,7 +717,7 @@ async function claimSidePanel(windowId) {
 
   if (previousWindowId !== null && previousWindowId !== nextWindowId) {
     await deactivateSidePanelWindow(previousWindowId);
-    await chrome.sidePanel.close({ windowId: previousWindowId });
+    await closeSidePanelWindow(previousWindowId);
   }
 
   await deactivateAllTabPanels();
@@ -784,7 +788,8 @@ async function deactivateAllTabPanels() {
   await Promise.all([
     stopPcmRoutesExceptTab(null),
     ...tabs.map(async (tab) => {
-      if (!tab.id) {
+      // 冻结标签页无法执行消息事件，已丢弃标签页也没有可关闭的页面实例。
+      if (!isTabReadyForPanelMessage(tab)) {
         return;
       }
       const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_CLOSE' });
@@ -804,10 +809,14 @@ async function ensureContentScript(tabId) {
   }
 
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content.js']
-    });
+    await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js']
+      }),
+      PANEL_SCRIPT_INJECTION_TIMEOUT_MS,
+      `content script injection for tab ${tabId}`
+    );
   } catch {
     return false;
   }
@@ -901,6 +910,8 @@ async function performPanelSyncToTab(tabId, syncSeq) {
   }
 
   if (state.displayMode === 'sidebar') {
+    // 标签页刚激活时 frozen 标记可能尚未刷新，直接对当前标签页再做一次有界关闭。
+    await sendTabMessage(tabId, { type: 'NEKO_FORCE_CLOSE' });
     await deactivateAllTabPanels();
     if (!isCurrent()) {
       return staleResponse;
@@ -1055,7 +1066,8 @@ async function enforceSingleActivePanel(activeTabId) {
   await Promise.all([
     stopPcmRoutesExceptTab(activeTabId),
     ...tabs.map(async (tab) => {
-      if (!tab.id || tab.id === activeTabId) {
+      // 不等待无法执行事件处理器的标签页，避免一次清理堵住整个模式切换队列。
+      if (!isTabReadyForPanelMessage(tab) || tab.id === activeTabId) {
         return;
       }
       const response = await sendTabMessage(tab.id, { type: 'NEKO_FORCE_MINIMIZE' });
@@ -1104,9 +1116,44 @@ async function sweepPanelSingleton() {
 
 async function sendTabMessage(tabId, message) {
   try {
-    return await chrome.tabs.sendMessage(tabId, message);
-  } catch {
+    return await withTimeout(
+      chrome.tabs.sendMessage(tabId, message),
+      PANEL_TAB_MESSAGE_TIMEOUT_MS,
+      `tab ${tabId} message ${message?.type || 'unknown'}`
+    );
+  } catch (error) {
+    if (String(error?.message || error).includes('timed out')) {
+      console.warn(
+        '[N.E.K.O Floating] 标签页消息未及时响应，已跳过以继续状态切换:',
+        tabId,
+        message?.type || 'unknown'
+      );
+    }
     return null;
+  }
+}
+
+function isTabReadyForPanelMessage(tab) {
+  return Number.isInteger(tab?.id)
+    && tab.discarded !== true
+    && tab.frozen !== true;
+}
+
+async function closeSidePanelWindow(windowId) {
+  try {
+    await withTimeout(
+      sidePanelLifecycle.close({ windowId }),
+      SIDE_PANEL_CLOSE_TIMEOUT_MS,
+      `side panel close for window ${windowId}`
+    );
+    return true;
+  } catch (error) {
+    console.warn(
+      '[N.E.K.O Floating] 侧栏未能及时关闭，继续完成显示模式切换:',
+      windowId,
+      String(error?.message || error)
+    );
+    return false;
   }
 }
 

@@ -54,6 +54,11 @@ test('display mode selector slides its indicator and stays open after switching'
   assert.ok(modeClickMarker >= 0 && modeHandlerStart >= 0 && modeHandlerEnd > modeHandlerStart);
   assert.match(modeHandler, /currentMode = mode/);
   assert.doesNotMatch(modeHandler, /window\.close\(\)/);
+  assert.match(modeHandler, /DISPLAY_MODE_REQUEST_TIMEOUT_MS/);
+  assert.match(modeHandler, /SIDE_PANEL_OPEN_TIMEOUT_MS/);
+  assert.match(modeHandler, /await refresh\(\)/);
+  assert.match(popup, /POPUP_STATE_REQUEST_TIMEOUT_MS/);
+  assert.match(popup, /function withTimeout\(promise, timeoutMs, label\)/);
 });
 
 test('feature panels use a simple hover lift on fine pointers', () => {
