@@ -159,7 +159,10 @@ pnpm dev       # WXT 开发模式
 pnpm test      # 运行时 JavaScript 检查 + N.E.K.O CJS + integration Vitest
 pnpm compile   # WXT prepare + 运行时 JavaScript 与 TypeScript 检查
 pnpm build     # 生产构建
+pnpm zip:store # Chrome Web Store 上传包（manifest 不含 key）
 ```
+
+上架 Chrome Web Store 的步骤、商品详情文案和图片见 [store/README.md](store/README.md)，隐私政策见 [PRIVACY.md](PRIVACY.md)。
 
 运行时 JavaScript 检查会阻止新增的类型赋值、属性和参数错误。现有类型债务记录在
 `scripts/runtime-semantic-baseline.json`；修复旧诊断后应同步下调基线，不能提高基线绕过检查。

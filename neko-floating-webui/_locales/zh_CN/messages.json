@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "N.E.K.O. 猫娘浏览器伴侣",
+    "description": "Extension name shown in the browser and the Chrome Web Store."
+  },
+  "extDescription": {
+    "message": "把本地运行的 N.E.K.O. 猫娘带进每个网页：浮窗、全屏或侧栏显示，并可通过 BrowserSkill 让本地 AI Agent 协助操作浏览器。",
+    "description": "Short extension description, at most 132 characters."
+  }
+}

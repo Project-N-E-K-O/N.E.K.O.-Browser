@@ -24,8 +24,13 @@ const browserSkillDaemonOrigin = (() => {
   }
   return url.origin;
 })();
+// Chrome Web Store rejects packages whose manifest contains `key`; the store
+// assigns the same ID from its own copy of this public key.
+const isStoreBuild = process.env.NEKO_STORE_BUILD === "1";
+const { key: manifestKey, ...manifestWithoutKey } = manifestBase;
 const manifest = {
-  ...manifestBase,
+  ...manifestWithoutKey,
+  ...(isStoreBuild ? {} : { key: manifestKey }),
   content_security_policy: {
     ...manifestBase.content_security_policy,
     extension_pages: [
@@ -133,6 +138,7 @@ export default defineConfig({
         }
       }
       addPublicDirectory(files, resolve(here, "assets"), here);
+      addPublicDirectory(files, resolve(here, "_locales"), here);
       files.push(
         {
           absoluteSrc: resolve(browserSkillExtension, "assets/logo.png"),

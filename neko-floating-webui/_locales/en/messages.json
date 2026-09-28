@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "N.E.K.O. Browser Companion",
+    "description": "Extension name shown in the browser and the Chrome Web Store."
+  },
+  "extDescription": {
+    "message": "Bring your local N.E.K.O. companion to any web page as a floating window, fullscreen overlay or side panel, with BrowserSkill.",
+    "description": "Short extension description, at most 132 characters."
+  }
+}

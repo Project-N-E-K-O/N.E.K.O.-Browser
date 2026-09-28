@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "node scripts/ensure-browser-skill.cjs && wxt",
     "build": "node scripts/ensure-browser-skill.cjs && wxt build",
+    "zip:store": "node scripts/ensure-browser-skill.cjs && node scripts/zip-store.cjs",
+    "set-extension-key": "node scripts/set-extension-key.cjs",
     "compile": "node scripts/ensure-browser-skill.cjs && wxt prepare && pnpm check:runtime && tsc --noEmit",
     "check:runtime": "node scripts/check-runtime-js.cjs",
     "test": "pnpm check:runtime && pnpm test:neko && pnpm test:integration",
